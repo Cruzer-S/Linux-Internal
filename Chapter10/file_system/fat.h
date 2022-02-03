@@ -1,0 +1,31 @@
+#ifndef FAT_H__
+#define FAT_H__
+
+#define FAT12	0
+#define FAT16	1
+#define FAT32	2
+
+#define MAX_SECTOR_SIZE		512
+#define MAX_NAME_LENGTH		256
+#define MAX_ENTRY_NAME_LENGTH	11
+
+enum fat_attr {
+	FAT_ATTR_READ_ONLY	= 0x01,
+	FAT_ATTR_HIDDEN		= 0x02,
+	FAT_ATTR_SYSTEM		= 0x04,
+	FAT_ATTR_VOLUME_ID	= 0x08,
+	FAT_ATTR_DIRECTORY	= 0x10,
+	FAT_ATTR_ARCHIVE	= 0x20,
+	FAT_ATTR_LONG_NAME	= FAT_ATTR_READ_ONLY | FAT_ATTR_HIDDEN
+		                | FAT_ATTR_SYSTEM    | FAT_ATTR_VOLUME_ID,
+};
+
+enum fat_entry_attr {
+	FAT_ENTRY_ATTR_FREE		= 0xE5,
+	FAT_ENTRY_ATTR_NO_MORE		= 0x00,
+	FAT_ENTRY_ATTR_OVERWRITE	= 0x01
+};
+
+#define ATTR_READ_ONLY		0x001
+
+#endif
