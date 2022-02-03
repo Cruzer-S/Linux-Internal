@@ -58,3 +58,8 @@ tags
 **/tags
 
 *.json
+
+*.idx
+
+output
+**/output
