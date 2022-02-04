@@ -2,13 +2,7 @@
 
 #include <stdio.h>	// for printf() series
 #include <stdlib.h>	// for malloc()
-#include <string.h>	// for memset()
 #include <stdarg.h>	// for va_*** series
-
-#define memset_mv(DEST, VALUE, SIZE) memset(DEST, VALUE, SIZE),			\
-				     DEST = (char *) (DEST) + (SIZE)
-#define memcpy_mv(DEST, VALUE, SIZE) memcpy(DEST, VALUE, SIZE),			\
-				     DEST = (char *) (DEST) + (SIZE)
 
 int cprintf(const char *fmt, char chr, int width, ...)
 {
@@ -37,6 +31,8 @@ int cprintf(const char *fmt, char chr, int width, ...)
 	memcpy_mv(trackstr, fmtstr, fmtlen);
 	memset_mv(trackstr, chr, padlen / 2 + rem);
 	*trackstr = '\0';
+
+	fputs(alignstr, stdout);
 
 	free(fmtstr); free(alignstr);
 	return fmtlen + padlen;
