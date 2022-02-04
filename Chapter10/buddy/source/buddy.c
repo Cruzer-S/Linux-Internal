@@ -114,7 +114,7 @@ static struct buddy_allocator *init_memory(int memsize);
 static int cal_cur_order(unsigned long mem);
 
 static int calc_gap(int order);
-static char *strcenter(char str[], unsigned int new_length, char placeholder);
+static int cprintf(const char *fmt, char chr, int width, ...);
 //------------------------------------------------------------------------------
 // Global function
 //------------------------------------------------------------------------------
@@ -442,13 +442,30 @@ static void free_pages_ok(allocator buddy, int idx)
 int cprintf(const char *fmt, char chr, int width, ...)
 {
 	char *fmtstr, *alignstr;
-	int fmtlen, padlen;
+	int fmtlen, padlen, rem;
 	va_list ap;
 
 	va_start(ap, width);
-	fmtlen = vsnprintf(NULL, 0, fmt, ap);
-	padlen = (fmtlen >= width) ? 0 : width - width;
+		fmtlen = vsnprintf(NULL, 0, fmt, ap);
+		fmtstr = malloc(fmtlen + 1);
+		if(fmtstr == NULL)
+			goto RETURN_ERR;
+
+		vsprintf(fmtstr, fmt, ap);
 	va_end(ap);
+
+	padlen = (fmtlen >= width) ? 0 : width - fmtlen;
+	rem    = padlen % 2;
+
+	alignstr = malloc(fmtlen + padlen + 1);
+	if (alignstr == NULL)
+		goto FREE_FMT_STR;
+
+	free(fmtstr); free(alignstr);
+	return fmtlen + padlen;
+
+FREE_FMT_STR:	free(fmtstr);
+RETURN_ERR:	return -1;
 }
 
 static int calc_gap(int order)
