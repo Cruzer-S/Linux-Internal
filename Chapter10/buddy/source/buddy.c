@@ -1,6 +1,6 @@
 #include "buddy.h"
 
-#include <stdarg.h>
+#include "exstdlib.h"
 
 // STRUCT_DATA: buddy_allocator, free_area struct, bitmap, page memory
 //              자료구조를 위한 메모리, 이후 init_memory() 에서 사용됨
@@ -114,7 +114,6 @@ static struct buddy_allocator *init_memory(int memsize);
 static int cal_cur_order(unsigned long mem);
 
 static int calc_gap(int order);
-static int cprintf(const char *fmt, char chr, int width, ...);
 //------------------------------------------------------------------------------
 // Global function
 //------------------------------------------------------------------------------
@@ -219,8 +218,6 @@ void buddy_show_free_list(struct buddy_allocator *buddy, int order)
 
 	printf("|\n");
 	cprintf("%s", total_page * (3 + 1) + 1, '-', "");
-
-	#undef cprintf
 }
 //------------------------------------------------------------------------------
 // Local function
