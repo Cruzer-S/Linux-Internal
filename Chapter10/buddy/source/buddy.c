@@ -114,6 +114,7 @@ static struct buddy_allocator *init_memory(int memsize);
 static int cal_cur_order(unsigned long mem);
 
 static int calc_gap(int order);
+
 //------------------------------------------------------------------------------
 // Global function
 //------------------------------------------------------------------------------
@@ -148,7 +149,7 @@ struct buddy_allocator *buddy_create(int memsize)
 	// 남은 페이지를 등록, 일반적으로 한번 돌고 끝나지만
 	// 전체 메모리가 너무 큰 경우 max_order 페이지가 여러 개
 	// 등록될 수 있기 때문에 반복을 통해 페이지를 추가한다.
-	for (int nr = 0; nr < total_page - order_page; nr += (1UL << cur_order)) 
+	for (int nr = 0; nr < total_page - order_page; nr += (1UL << cur_order))
 	{
 		int nr_next = nr + (1UL << cur_order);
 		list_add(&area->free_list, &buddy->lmem_map[nr_next].list);
@@ -195,10 +196,10 @@ void buddy_show_free_list(struct buddy_allocator *buddy, int order)
 
 	total_page = TOTAL_PAGES(PAGE_SIZE << buddy->max_order);
 
-	cprintf("order %d", total_page * (3 + 1) + 1, '-', order); puts("");
-	
-	for (int i = 0; i < total_page; i += 1 << order) {
-		printf("|");
+	cprintf("order %d", '-', total_page * (3 + 1) + 1, order); puts("");
+
+	for (int i = 0; i < total_page; i += (1 << order)) {
+		fputs("|", stdout);
 
 		find = -1;
 		for (struct page *p = (struct page *) area->free_list.next,
@@ -212,12 +213,12 @@ void buddy_show_free_list(struct buddy_allocator *buddy, int order)
 			}
 		}
 
-		if (find == -1) cprintf("-", calc_gap(order), ' ');
-		else		cprintf("%d", calc_gap(order), ' ', find);
+		if (find == -1) cprintf("-", ' ', calc_gap(order));
+		else		cprintf("%d", ' ', calc_gap(order), find);
 	}
 
-	printf("|\n");
-	cprintf("%s", total_page * (3 + 1) + 1, '-', "");
+	puts("|");
+	cprintf("", '-', total_page * (3 + 1) + 1); puts("");
 }
 //------------------------------------------------------------------------------
 // Local function
@@ -231,7 +232,7 @@ static void *ready_for_memory(int memsize)
 		MAP_ANONYMOUS | MAP_PRIVATE, -1, 0
 	);
 
-	printf("memory is ready, address is %p\n", real_memory);
+	printf("memory is ready, address is %p\n", (void *) real_memory);
 
 	return real_memory;
 }
@@ -248,7 +249,7 @@ static int cal_cur_order(unsigned long mem)
 	//     단일 페이지의 크기가 4KiB 라면,
 	//     최대로 가질 수 있는 page 의 개수는 16 개(4KiB 만 할당 시)이고
 	//     최소로 가질 수 있는 page 의 개수는 1개이면서, 그 크기는
-	//     PAGE_SIZE << 3 이다. 따라서 ORDER 가 3 인 상태의 
+	//     PAGE_SIZE << 3 이다. 따라서 ORDER 가 3 인 상태의
 
 	if (mem > (PAGE_SIZE << (BUDDY_MAX_ORDER - 1)))
 		return BUDDY_MAX_ORDER;

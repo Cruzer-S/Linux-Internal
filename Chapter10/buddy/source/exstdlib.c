@@ -8,16 +8,18 @@ int cprintf(const char *fmt, char chr, int width, ...)
 {
 	char *fmtstr, *alignstr, *trackstr;
 	int fmtlen, padlen, rem;
-	va_list ap;
+	va_list ap_for_len, ap_for_read;
 
-	va_start(ap, width);
-		fmtlen = vsnprintf(NULL, 0, fmt, ap);
+	va_start(ap_for_len, width);
+		va_copy(ap_for_read, ap_for_len);
+		fmtlen = vsnprintf(NULL, 0, fmt, ap_for_len);
 		fmtstr = malloc(fmtlen + 1);
 		if(fmtstr == NULL)
 			goto RETURN_ERR;
 
-		vsprintf(fmtstr, fmt, ap);
-	va_end(ap);
+		vsprintf(fmtstr, fmt, ap_for_read);
+		va_end(ap_for_read);
+	va_end(ap_for_len);
 
 	padlen = (fmtlen >= width) ? 0 : width - fmtlen;
 	rem    = padlen % 2;
@@ -30,7 +32,7 @@ int cprintf(const char *fmt, char chr, int width, ...)
 	memset_mv(trackstr, chr, padlen / 2);
 	memcpy_mv(trackstr, fmtstr, fmtlen);
 	memset_mv(trackstr, chr, padlen / 2 + rem);
-	*trackstr = '\0';
+	*++trackstr = '\0';
 
 	fputs(alignstr, stdout);
 
