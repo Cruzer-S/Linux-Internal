@@ -25,6 +25,7 @@ bool bitmap_switch(Bitmap map, uint64_t pos);
 void bitmap_show_all(Bitmap map, bool high_start);
 void bitmap_show_area(Bitmap map, uint64_t start, uint64_t end);
 uint64_t bitmap_size(Bitmap map);
+int bitmap_bytebit(void);
 /* extern int __bitmap_calc_alloc_size(bool is_full_struct, uint64_t size); */
 
 #endif

@@ -184,23 +184,19 @@ void buddy_page_free(struct buddy_allocator *buddy, struct page *page)
 	free_pages_ok(buddy, i);
 }
 
-void buddy_show_free_list(struct buddy_allocator *buddy, int order)
+static void buddy_show_order_status(struct buddy_allocator *buddy, int order)
 {
-	struct free_area_t *area = &buddy->free_area[order];
+	struct free_area_t *area;
 	int total_page, find;
 
-	if (buddy->max_order <= order)
-		return ;	// invalid operation
+	if (buddy->max_order < order)
+		return ;
 
 	area = &buddy->free_area[order];
-
 	total_page = TOTAL_PAGES(PAGE_SIZE << buddy->max_order);
 
-	cprintf("order %d", '-', total_page * (3 + 1) + 1, order); puts("");
-
-	for (int i = 0; i < total_page; i += (1 << order)) {
-		fputs("|", stdout);
-
+	for (int i = 0; i < total_page; i += ((1 << order)))
+	{
 		find = -1;
 		for (struct page *p = (struct page *) area->free_list.next,
 				 *q = (struct page *) &area->free_list;
@@ -215,10 +211,40 @@ void buddy_show_free_list(struct buddy_allocator *buddy, int order)
 
 		if (find == -1) cprintf("-", ' ', calc_gap(order));
 		else		cprintf("%d", ' ', calc_gap(order), find);
-	}
 
-	puts("|");
-	cprintf("", '-', total_page * (3 + 1) + 1); puts("");
+		putchar('|');
+	}
+}
+
+void buddy_show_status(struct buddy_allocator *buddy)
+{
+	struct free_area_t *area;
+	int total_page;
+	int padd_bitmap, padd_freelist, padd_order;
+
+	for (int i = 0; i < buddy->max_order; i++) {
+		area = &buddy->free_area[i];
+
+		total_page = TOTAL_PAGES(PAGE_SIZE << buddy->max_order);
+		padd_bitmap = bitmap_size(area->map) / bitmap_bytebit() + 2
+			    + bitmap_size(area->map);
+		padd_freelist = total_page * (3 + 1) + 1;
+		padd_order = 12;
+
+		putchar('-'); cprintf(" [order] ", '-', padd_order);
+		cprintf(" [free list] ", '-', padd_freelist);
+		cprintf(" [bitmap] ", '-', padd_bitmap); NEWLINE;
+
+		putchar('|'); cprintf("%d", ' ', padd_order, i); putchar('|');
+
+		buddy_show_order_status(buddy, i);
+
+		bitmap_show_all(area->map, false); putchar('|');
+		NEWLINE;
+
+		cprintf("", '-', padd_bitmap + padd_freelist + padd_order + 1);
+		NEWLINE;
+	}
 }
 //------------------------------------------------------------------------------
 // Local function
@@ -428,6 +454,7 @@ static void free_pages_ok(allocator buddy, int idx)
 		page = &buddy->lmem_map[((page_idx) ^ -mask)];
 
 		list_del(&page->list);
+
 		mask <<= 1;
 		area++;
 		index >>= 1;

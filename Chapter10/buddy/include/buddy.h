@@ -51,7 +51,7 @@ void buddy_destroy(Buddy buddy);
 Page buddy_page_alloc(Buddy buddy, unsigned int gfp_mask, unsigned int order);
 void buddy_page_free(Buddy buddy, Page page);
 
-// order 에 해당하는 free list 를 출력
-void buddy_show_free_list(struct buddy_allocator *buddy, int order);
+// 현재 buddy system 의 상태를 출력하는 함수
+void buddy_show_status(struct buddy_allocator *buddy);
 
 #endif

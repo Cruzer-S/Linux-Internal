@@ -112,10 +112,9 @@ void bitmap_clear(Bitmap bitmap)
 
 bool bitmap_get(Bitmap bitmap, uint64_t pos)
 {
-	int idx = BITMAP_INDEX(pos);
+	uint64_t idx = BITMAP_INDEX(pos);
 
-	return	(bitmap->map[idx])
-	      & (((btype) 1) << (pos & (BITMAP_SIZE - 1)));
+	return	(bitmap->map[idx]) & (((btype) 1) << (pos & (BITMAP_SIZE - 1)));
 }
 
 bool bitmap_switch(Bitmap bitmap, uint64_t pos)
@@ -183,4 +182,9 @@ void bitmap_destroy(Bitmap bitmap)
 	case BITMAP_ALLOC_FULL_STRUCT:
 		/* do nothing */ ;
 	}
+}
+
+int bitmap_bytebit(void)
+{
+	return BYTE_BIT;
 }
