@@ -3,16 +3,86 @@
 
 #include "buddy.h"
 #include "bitmap.h"
+#include "list.h"
 
 #define BITMAP_SHOW(BITMAP) bitmap_show_all(BITMAP, true)
 
+struct page_list {
+	struct page *page;
+	struct list_head head;
+};
+
+int free_page(struct buddy_allocator *buddy, struct page_list *main)
+{
+	int index, order, cnt = 0;
+
+	if (main == NULL) goto RETURN_ERR;
+
+	printf("index(1 ~ +) or order(- ~ 0): ");
+	scanf("%d", &index);
+
+	if (index <= 0) order = -index;
+
+	LIST_ITERATOR_WITH_ENTRY(main->head, entry, struct page_list, page)
+		if (++cnt == index || entry->page->order == order) {
+			buddy_page_free(buddy, entry->page);
+			LIST_ITERATOR_DELETE_ENTRY;
+			free(entry);
+
+			return 0;
+		}
+	LIST_ITERATOR_END
+
+RETURN_ERR: return -1;
+}
+
+int alloc_page(struct buddy_allocator *buddy, struct page_list **main)
+{
+	struct page_list *new_plist;
+	int order;
+
+	printf("order: "); scanf("%d", &order);
+	if (order < 0) goto RETURN_ERR;
+
+	new_plist = malloc(sizeof(struct page_list));
+	if ( !new_plist )
+		goto RETURN_ERR;
+
+	list_init(&new_plist->head);
+	new_plist->page = buddy_page_alloc(buddy, order);
+	if ( !new_plist->page )
+		goto FREE_PLIST;
+
+	if ( !*main )	*main = new_plist;
+	else		list_add(&(*main)->head, &new_plist->head);
+
+	return 0;
+
+FREE_PLIST:	free(new_plist);
+RETURN_ERR:	return -1;
+}
+
+void show_page(struct page_list *main)
+{
+	int index = 0;
+
+	if ( !main ) {
+		printf("No entry!!\n");
+		return ;
+	}
+
+	LIST_ITERATOR_WITH_ENTRY(main->head, entry, struct page_list, page)
+		printf("index: %d\t", index);
+		printf("order: %d\n", entry->page->order);
+	LIST_ITERATOR_END
+}
+
 int main(void)
 {
-	const char *square_str[] = { "one", "two", "four", "eight" };
-	struct page *page[4];
 	struct buddy_allocator *buddy;
+	struct page_list *main_list = NULL;
 
-	int memsize;
+	int memsize, menu;
 
 	printf("total memory size(KiB)? ");
 	scanf("%d", &memsize); memsize *= 1024;
@@ -21,28 +91,31 @@ int main(void)
 	if ( !buddy )
 		exit(EXIT_FAILURE);
 
-	// ---------------------------------------------------------------------
-	// Initial state
-	// ---------------------------------------------------------------------
-	buddy_show_status(buddy);
+	while (true) {
+		printf("1. allocate, 2. free, "
+		       "3. show alloc list, 4. show free list, "
+		       "5. quit \n");
+		printf("Choose menu: "); scanf("%d", &menu);
+		switch (menu) {
+		case 1:	alloc_page(buddy, &main_list);	
+			break;
 
-	// ---------------------------------------------------------------------
-	// Allocate memory
-	// ---------------------------------------------------------------------
-	for (int i = 0; i < 4; i++) {
-		page[i] = buddy_page_alloc(buddy, 0, i);
-		printf("allocate %s page(s)\n", square_str[i]);
-		buddy_show_status(buddy); putchar('\n');
-	}
+		case 2: free_page(buddy, main_list);
+			break;
 
-	// ---------------------------------------------------------------------
-	// Free memory
-	// ---------------------------------------------------------------------
-	for (int i = 0; i < 4; i++) {
-		buddy_page_free(buddy, page[i]);
-		printf("free %s page(s)\n", square_str[i]);
-		buddy_show_status(buddy); putchar('\n');
-	}
+		case 3: show_page(main_list);
+			break;
+
+		case 4: buddy_show_status(buddy, BUDDY_SHOW_ALL);
+			break;
+
+		case 5:	goto WHILE_LOOP_BREAK;
+			break;
+
+		default: printf("invalid menu number\n");
+			 continue;
+		}
+	} WHILE_LOOP_BREAK:
 
 	buddy_destroy(buddy);
 

@@ -34,24 +34,32 @@
 //   => 그러므로 이는 MEMSIZE 를 기준으로 할당 가능한 PAGE 의 개수를 의미
 #define TOTAL_PAGES(MEMSIZE)	((MEMSIZE) >> PAGE_SHIFT)
 
-typedef struct page {
+struct page {
 	struct list_head list;	// free_area_t 구조체와 연결하기 위한 리스트
 	unsigned long flags;	// nothing to do for now
 	void *addr;		// page 의 실제 메모리 주소
 	int order;		// 해당 페이지의 order
-} *Page;
+};
 
-typedef struct buddy_allocator *Buddy;
+enum buddy_show_type {
+	BUDDY_SHOW_BITMAP	= 0x01,
+	BUDDY_SHOW_FREELIST	= 0x02,
+	BUDDY_SHOW_ALL		= BUDDY_SHOW_BITMAP & BUDDY_SHOW_FREELIST
+};
+
+struct buddy_allocator;
 
 // buddy allocator 생성 & 초기화, 해제 & 제거 함수
-Buddy buddy_create(int memsize);
-void buddy_destroy(Buddy buddy);
+struct buddy_allocator *buddy_create(int memsize);
+void buddy_destroy(struct buddy_allocator *buddy);
 
 // 페이지 할당, 해제 함수
-Page buddy_page_alloc(Buddy buddy, unsigned int gfp_mask, unsigned int order);
-void buddy_page_free(Buddy buddy, Page page);
+struct page *buddy_page_alloc(struct buddy_allocator *buddy,
+		              unsigned int order);
+void buddy_page_free(struct buddy_allocator *buddy, struct page *page);
 
 // 현재 buddy system 의 상태를 출력하는 함수
-void buddy_show_status(struct buddy_allocator *buddy);
+void buddy_show_status(struct buddy_allocator *buddy,
+		       enum buddy_show_type type);
 
 #endif

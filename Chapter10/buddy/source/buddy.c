@@ -92,17 +92,14 @@ struct buddy_allocator {
 	struct free_area_t *free_area;
 };
 
-typedef struct buddy_allocator *allocator;
-
 //------------------------------------------------------------------------------
 // Local function prototype 
 //------------------------------------------------------------------------------
 static void *ready_for_memory(int memsize);
-// void _show_free_order_list(struct buddy_allocator *buddy, int order);
-static void free_pages_ok(allocator buddy, int idx);
+static void free_pages_ok(struct buddy_allocator *buddy, int idx);
 static struct page *__alloc_pages(
-		allocator buddy,
-		unsigned int gfp_mask, unsigned int order
+		struct buddy_allocator *buddy,
+		unsigned int order
 	);
 static struct page *expand(
 		struct page *page,
@@ -114,6 +111,7 @@ static struct buddy_allocator *init_memory(int memsize);
 static int cal_cur_order(unsigned long mem);
 
 static int calc_gap(int order);
+static void buddy_show_order_status(struct buddy_allocator *buddy, int order);
 
 //------------------------------------------------------------------------------
 // Global function
@@ -121,7 +119,7 @@ static int calc_gap(int order);
 struct buddy_allocator *buddy_create(int memsize)
 {
 	unsigned int order_page, total_page, cur_order;
-	allocator buddy;
+	struct buddy_allocator *buddy;
 	struct free_area_t *area;
 	
 	// buddy 구조체 완성
@@ -165,13 +163,9 @@ void buddy_destroy(struct buddy_allocator *buddy)
 	printf("free allocated real memory.. \n");
 }
 
-struct page *buddy_page_alloc(
-		struct buddy_allocator *buddy,
-		unsigned int gfp_mask,
-		unsigned int order
-	)
+struct page *buddy_page_alloc(struct buddy_allocator *buddy, unsigned int order)
 {
-	return __alloc_pages(buddy, gfp_mask, order);
+	return __alloc_pages(buddy, order);
 }
 
 void buddy_page_free(struct buddy_allocator *buddy, struct page *page)
@@ -184,39 +178,8 @@ void buddy_page_free(struct buddy_allocator *buddy, struct page *page)
 	free_pages_ok(buddy, i);
 }
 
-static void buddy_show_order_status(struct buddy_allocator *buddy, int order)
-{
-	struct free_area_t *area;
-	int total_page, find;
-
-	if (buddy->max_order < order)
-		return ;
-
-	area = &buddy->free_area[order];
-	total_page = TOTAL_PAGES(PAGE_SIZE << buddy->max_order);
-
-	for (int i = 0; i < total_page; i += ((1 << order)))
-	{
-		find = -1;
-		for (struct page *p = (struct page *) area->free_list.next,
-				 *q = (struct page *) &area->free_list;
-		     p != q;
-		     p = (struct page *) p->list.next)
-		{
-			if (GET_NR_PAGE(buddy, p->addr) == i) {
-				find = i;
-				break;
-			}
-		}
-
-		if (find == -1) cprintf("-", ' ', calc_gap(order));
-		else		cprintf("%d", ' ', calc_gap(order), find);
-
-		putchar('|');
-	}
-}
-
-void buddy_show_status(struct buddy_allocator *buddy)
+void buddy_show_status(struct buddy_allocator *buddy,
+		       enum buddy_show_type type)
 {
 	struct free_area_t *area;
 	int total_page;
@@ -236,11 +199,9 @@ void buddy_show_status(struct buddy_allocator *buddy)
 		cprintf(" [bitmap] ", '-', padd_bitmap); NEWLINE;
 
 		putchar('|'); cprintf("%d", ' ', padd_order, i); putchar('|');
-
 		buddy_show_order_status(buddy, i);
-
-		bitmap_show_all(area->map, false); putchar('|');
-		NEWLINE;
+		putchar(' '); bitmap_show(area->map, true); putchar(' ');
+		putchar('|'); NEWLINE;
 
 		cprintf("", '-', padd_bitmap + padd_freelist + padd_order + 1);
 		NEWLINE;
@@ -283,7 +244,7 @@ static int cal_cur_order(unsigned long mem)
 	return -1;
 }
 
-struct buddy_allocator *init_memory(int memsize)
+static struct buddy_allocator *init_memory(int memsize)
 {
 	struct buddy_allocator *buddy;
 	byte *real_memory;
@@ -327,7 +288,7 @@ L-------^-----------^-------------^--------^-----^-------^-------^-----^-------J
 	for (int i = 0; i < buddy->max_order; i++) {
 		unsigned long map_size, struct_size;
 
-		INIT_LIST_HEAD(&buddy->free_area[i].free_list);
+		list_init(&buddy->free_area[i].free_list);
 
 		map_size = (buddy->free_pages / 2) >> i;
 		struct_size = __bitmap_calc_alloc_size(true, map_size);
@@ -376,16 +337,20 @@ static struct page *expand(
 }
 
 static struct page *__alloc_pages(
-		allocator buddy,
-		unsigned int gfp_mask,
+		struct buddy_allocator *buddy,
 		unsigned int order
 	)
 {
 	struct page *page;
 	unsigned int curr_order = order;
-	struct free_area_t *area = &buddy->free_area[order];
+	struct free_area_t *area;
 
 	struct list_head *head, *curr;
+
+	if (buddy->max_order < order)
+		return NULL;
+
+	area = &buddy->free_area[order];
 
 	do {
 		head = &area->free_list;
@@ -424,7 +389,7 @@ static struct page *__alloc_pages(
 	return NULL;
 }
 
-static void free_pages_ok(allocator buddy, int idx)
+static void free_pages_ok(struct buddy_allocator *buddy, int idx)
 {
 	unsigned long index, page_idx, mask;
 	struct page *page;
@@ -470,4 +435,36 @@ static int calc_gap(int order)
 		return 3;
 
 	return calc_gap(order - 1) * 2 + 1;
+}
+
+static void buddy_show_order_status(struct buddy_allocator *buddy, int order)
+{
+	struct free_area_t *area;
+	int total_page, find;
+
+	if (buddy->max_order < order)
+		return ;
+
+	area = &buddy->free_area[order];
+	total_page = TOTAL_PAGES(PAGE_SIZE << buddy->max_order);
+
+	for (int i = 0; i < total_page; i += ((1 << order)))
+	{
+		find = -1;
+		for (struct page *p = (struct page *) area->free_list.next,
+				 *q = (struct page *) &area->free_list;
+		     p != q;
+		     p = (struct page *) p->list.next)
+		{
+			if (GET_NR_PAGE(buddy, p->addr) == i) {
+				find = i;
+				break;
+			}
+		}
+
+		if (find == -1) cprintf("-", ' ', calc_gap(order));
+		else		cprintf("%d", ' ', calc_gap(order), find);
+
+		putchar('|');
+	}
 }

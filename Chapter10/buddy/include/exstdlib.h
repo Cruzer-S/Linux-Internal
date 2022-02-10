@@ -9,6 +9,9 @@
 #define memcpy_mv(DEST, VALUE, SIZE) memcpy(DEST, VALUE, SIZE),			\
 				     DEST = (char *) (DEST) + (SIZE)
 
+#define container_of(PTR, TYPE, MEMBER)						\
+		((TYPE *) ((char *) (PTR) - offsetof(TYPE, MEMBER)))
+
 #define NEWLINE	 putchar('\n')
 
 int cprintf(const char *fmt, char chr, int width, ...);

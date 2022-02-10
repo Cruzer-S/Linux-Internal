@@ -29,7 +29,8 @@ enum bitmap_alloc {
 typedef unsigned int btype;
 
 struct bitmap {
-	int size;
+	int real_size;
+	int alloc_size;
 	btype *map;
 
 	enum bitmap_alloc type;
@@ -87,7 +88,8 @@ Bitmap __bitmap_create(uint64_t size, void *addr, int addr_size)
 
 	bitmap->map = map_addr;
 	bitmap->type = type;
-	bitmap->size = BITMAP_INDEX_ALIGN(size);
+	bitmap->alloc_size = BITMAP_INDEX_ALIGN(size);
+	bitmap->real_size = size;
 
 	return bitmap;
 }
@@ -107,7 +109,7 @@ int __bitmap_calc_alloc_size(bool is_full_struct, uint64_t size)
 
 void bitmap_clear(Bitmap bitmap)
 {
-	memset(bitmap->map, 0x00, bitmap->size * sizeof(btype));
+	memset(bitmap->map, 0x00, bitmap->alloc_size * sizeof(btype));
 }
 
 bool bitmap_get(Bitmap bitmap, uint64_t pos)
@@ -139,15 +141,30 @@ void bitmap_set(Bitmap bitmap, uint64_t pos, bool set)
 
 uint64_t bitmap_size(Bitmap bitmap)
 {
-	return (bitmap->size * BITMAP_SIZE);
+	return (bitmap->real_size);
+}
+
+uint64_t bitmap_asize(Bitmap bitmap)
+{
+	return (bitmap->alloc_size * BITMAP_SIZE);
+}
+
+void bitmap_show(Bitmap bitmap, bool high_start)
+{
+	uint64_t start, end;
+
+	if (high_start) start = bitmap_size(bitmap) - 1, end = 0;
+	else		start = 0, end = bitmap_size(bitmap) - 1;
+
+	bitmap_show_area(bitmap, start, end);
 }
 
 void bitmap_show_all(Bitmap bitmap, bool high_start)
 {
 	uint64_t start, end;
 
-	if (high_start)	start = bitmap_size(bitmap) - 1, end = 0;
-	else		start = 0, end = bitmap_size(bitmap) - 1;
+	if (high_start)	start = bitmap_asize(bitmap) - 1, end = 0;
+	else		start = 0, end = bitmap_asize(bitmap) - 1;
 
 	bitmap_show_area(bitmap, start, end);
 }
@@ -161,9 +178,6 @@ void bitmap_show_area(Bitmap bitmap, uint64_t start, uint64_t end)
 		if (nr != 0) {
 			if (nr % BYTE_BIT == 0)
 				fputc(' ', stdout);
-
-			if (nr % BITMAP_SIZE == 0)
-				fputc('\t', stdout);
 		}
 	}
 

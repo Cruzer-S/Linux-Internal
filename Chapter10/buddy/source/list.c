@@ -1,5 +1,11 @@
 #include "list.h"
 
+void list_init(struct list_head *head)
+{
+	head->next = head;
+	head->prev = head;
+}
+
 void list_add(struct list_head *head, struct list_head *new)
 {
 	// link with (new) <=> (head->next)

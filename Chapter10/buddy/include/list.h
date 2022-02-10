@@ -3,17 +3,38 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+
+#include "exstdlib.h"
 
 struct list_head {
 	struct list_head *next, *prev;
 };
 
-#define INIT_LIST_HEAD(PTR) do {						\
-	(PTR)->next = (PTR); (PTR)->prev = (PTR);				\
-} while (false);
+#define LIST_HEAD_INIT(HEAD) { .next = &(HEAD), .prev = &(HEAD) }
 
-#define LIST_ENTRY(PTR, TYPE, MEMBER)						\
-	(void *) ((char *) PTR + offsetof(TYPE, MEMBER))
+#define LIST_ENTRY container_of
+
+#define LIST_ITERATOR_WITH_ENTRY(HEAD, ENTRY, TYPE, MEMBER)			\
+	do {									\
+		struct list_head *__LIST_START = &HEAD, *__LIST_END = HEAD.prev;\
+		do {								\
+			TYPE *ENTRY = container_of(__LIST_START, TYPE, MEMBER);
+			/*
+			 * ...
+			 */
+#define LIST_ITERATOR_END							\
+			if (__LIST_START == NULL)				\
+				break;						\
+		} while ( __LIST_START = __LIST_START->next,			\
+			  __LIST_START != __LIST_END         ) ;		\
+	} while (false);
+
+#define LIST_ITERATOR_DELETE_ENTRY	list_del(__LIST_START)
+#define LIST_ITERATOR_BREAK		break
+#define LIST_ITERATOR_CONTINUE		continue
+
+void list_init(struct list_head *head);
 
 void list_add(struct list_head *head, struct list_head *new);
 void list_del(struct list_head *head);
