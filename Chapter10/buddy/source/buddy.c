@@ -53,7 +53,7 @@
 //	bitmap_set(buddy->free_area[1].map, 8 >> (1 + 1), false);
 //	bitmap_set(buddy->free_area[1].map, 2, false);
 #define MARK_USED(AREA, INDEX, ORDER)						\
-	bitmap_set((AREA)->map, (INDEX) >> (1 + (ORDER)), false)
+	bitmap_switch((AREA)->map, (INDEX) >> (1 + (ORDER)))
 
 #include <stdlib.h>	// malloc()
 #include <stdbool.h>	// true, false
@@ -200,8 +200,7 @@ void buddy_show_status(struct buddy_allocator *buddy,
 
 		putchar('|'); cprintf("%d", ' ', padd_order, i); putchar('|');
 		buddy_show_order_status(buddy, i);
-		putchar(' '); bitmap_show(area->map, true); putchar(' ');
-		putchar('|'); NEWLINE;
+		putchar(' '); bitmap_show(area->map, false); puts(" |");
 
 		cprintf("", '-', padd_bitmap + padd_freelist + padd_order + 1);
 		NEWLINE;

@@ -17,7 +17,8 @@ struct list_head {
 
 #define LIST_ITERATOR_WITH_ENTRY(HEAD, ENTRY, TYPE, MEMBER)			\
 	do {									\
-		struct list_head *__LIST_START = &HEAD, *__LIST_END = HEAD.prev;\
+		struct list_head *__LIST_START = HEAD,				\
+		                 *__LIST_END   = HEAD->prev;			\
 		do {								\
 			TYPE *ENTRY = container_of(__LIST_START, TYPE, MEMBER);
 			/*

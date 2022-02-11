@@ -12,7 +12,7 @@ struct page_list {
 	struct list_head head;
 };
 
-int free_page(struct buddy_allocator *buddy, struct page_list *main)
+int free_page(struct buddy_allocator *buddy, struct list_head *main)
 {
 	int index, order, cnt = 0;
 
@@ -23,7 +23,7 @@ int free_page(struct buddy_allocator *buddy, struct page_list *main)
 
 	if (index <= 0) order = -index;
 
-	LIST_ITERATOR_WITH_ENTRY(main->head, entry, struct page_list, page)
+	LIST_ITERATOR_WITH_ENTRY(main, entry, struct page_list, page)
 		if (++cnt == index || entry->page->order == order) {
 			buddy_page_free(buddy, entry->page);
 			LIST_ITERATOR_DELETE_ENTRY;
@@ -36,7 +36,7 @@ int free_page(struct buddy_allocator *buddy, struct page_list *main)
 RETURN_ERR: return -1;
 }
 
-int alloc_page(struct buddy_allocator *buddy, struct page_list **main)
+int alloc_page(struct buddy_allocator *buddy, struct list_head **main)
 {
 	struct page_list *new_plist;
 	int order;
@@ -53,8 +53,8 @@ int alloc_page(struct buddy_allocator *buddy, struct page_list **main)
 	if ( !new_plist->page )
 		goto FREE_PLIST;
 
-	if ( !*main )	*main = new_plist;
-	else		list_add(&(*main)->head, &new_plist->head);
+	if ( !*main )	*main = &new_plist->head;
+	else		list_add(*main, &new_plist->head);
 
 	return 0;
 
@@ -62,7 +62,7 @@ FREE_PLIST:	free(new_plist);
 RETURN_ERR:	return -1;
 }
 
-void show_page(struct page_list *main)
+void show_page(struct list_head *main)
 {
 	int index = 0;
 
@@ -71,7 +71,7 @@ void show_page(struct page_list *main)
 		return ;
 	}
 
-	LIST_ITERATOR_WITH_ENTRY(main->head, entry, struct page_list, page)
+	LIST_ITERATOR_WITH_ENTRY(main, entry, struct page_list, page)
 		printf("index: %d\t", index);
 		printf("order: %d\n", entry->page->order);
 	LIST_ITERATOR_END
@@ -80,7 +80,7 @@ void show_page(struct page_list *main)
 int main(void)
 {
 	struct buddy_allocator *buddy;
-	struct page_list *main_list = NULL;
+	struct list_head *main_list = NULL;
 
 	int memsize, menu;
 
