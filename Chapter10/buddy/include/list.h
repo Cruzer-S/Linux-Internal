@@ -16,17 +16,17 @@ struct list_head {
 #define LIST_ENTRY container_of
 
 #define LIST_ITERATOR_WITH_ENTRY(HEAD, ENTRY, TYPE, MEMBER)			\
-	do {									\
+	do {	if (HEAD == NULL)						\
+			break;							\
+										\
 		struct list_head *__LIST_START = HEAD,				\
-		                 *__LIST_END   = HEAD->prev;			\
+		                 *__LIST_END   = HEAD;				\
 		do {								\
 			TYPE *ENTRY = container_of(__LIST_START, TYPE, MEMBER);
 			/*
 			 * ...
 			 */
 #define LIST_ITERATOR_END							\
-			if (__LIST_START == NULL)				\
-				break;						\
 		} while ( __LIST_START = __LIST_START->next,			\
 			  __LIST_START != __LIST_END         ) ;		\
 	} while (false);
