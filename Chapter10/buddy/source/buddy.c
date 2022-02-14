@@ -95,12 +95,7 @@ struct buddy_allocator {
 //------------------------------------------------------------------------------
 // Local function prototype 
 //------------------------------------------------------------------------------
-static void *ready_for_memory(int memsize);
-static void free_pages_ok(struct buddy_allocator *buddy, int idx);
-static struct page *__alloc_pages(
-		struct buddy_allocator *buddy,
-		unsigned int order
-	);
+static int find_fitness_order(int memsize);
 static struct page *expand(
 		struct page *page,
 		unsigned long index,
@@ -108,8 +103,6 @@ static struct page *expand(
 		struct free_area_t *area
 	);
 static struct buddy_allocator *init_memory(int memsize);
-static int cal_cur_order(unsigned long mem);
-
 static int calc_gap(int order);
 static void buddy_show_order_status(struct buddy_allocator *buddy, int order);
 
@@ -153,10 +146,13 @@ struct buddy_allocator *buddy_create(int memsize)
 		list_add(&area->free_list, &buddy->lmem_map[nr_next].list);
 		MARK_USED(area, nr, cur_order);
 	}
-	
+
 	return buddy;
 }
 
+// buddy allocator 를 제거한다.
+// buddy 는 mmap 을 통해 할당받은 메모리를 적절히 쪼개 할당했으므로 munmap 
+// 함수를 호출하는 것만으로 모든 buddy 시스템 데이터를 제거하는 것이 가능하다.
 void buddy_destroy(struct buddy_allocator *buddy)
 {
 	munmap(buddy, buddy->mem_size + STRUCT_DATA);
@@ -165,17 +161,115 @@ void buddy_destroy(struct buddy_allocator *buddy)
 
 struct page *buddy_page_alloc(struct buddy_allocator *buddy, unsigned int order)
 {
-	return __alloc_pages(buddy, order);
+	struct page *page;
+	unsigned int cur_order;
+	struct free_area_t *area;
+
+	struct list_head *head, *next;
+
+	// 할당하려는 order 가 max_order 다 크다면 NULL 반환
+	if (buddy->max_order <= order)
+		return NULL;
+
+	// free_area 가져오기
+	cur_order = order;
+	area = &buddy->free_area[cur_order];
+
+	do {
+		head = &area->free_list;
+		next = head->next;
+
+		// head 가 next 와 같지 않다? => 할당 가능한 페이지가 존재한다.
+		if (next != head) {
+			unsigned long index;
+
+			/* 
+			 * 1. list 에 연결되어 있는 페이지를 가져온다.
+			 * 2. 해당 페이지를 연결 리스트에서 제거한다.
+			 * 3. 페이지의 주소를 통해 페이지 인덱스를 가져온다.
+			 */
+			page = LIST_ENTRY(next, struct page, list);
+			list_del(next);
+			index = GET_NR_PAGE(buddy, (unsigned long) page->addr);
+
+			// max_order 인 경우를 제외한 모든 경우에 MARK 한다.
+			//if (cur_order != buddy->max_order - 1)
+			MARK_USED(area, index, cur_order);
+
+			// free_pages 를 할당한 크기만큼 줄인다.
+			buddy->free_pages -= (1UL << order);
+
+			page = expand(
+				/* page, index */
+				page, index,
+				/* low, high */
+				order, cur_order,
+				/* free area */
+				area
+			);
+
+			page->order = order;
+
+			return page;
+		}
+
+		// cur_order 에서 페이지를 찾지 못하면 여기로 떨어져 내려온다.
+		// cur_order 에 page 가 없다는 것은 아래를 뜻한다.
+		// => free_area list 에 그 어떠한 페이지도 없다.
+		// 따라서 다음 order 로 넘어간다.
+		cur_order++;
+		area++;
+
+		// order 가 만약 max_order 보다 크다면?
+		// => 이건 더 이상 할당할 페이지가 없다는 뜻
+	} while (cur_order < buddy->max_order);
+
+	// 그 어디에도 할당 가능한 데이터가 없다면 NULL 반환
+	return NULL;
 }
 
 void buddy_page_free(struct buddy_allocator *buddy, struct page *page)
 {
-	int i =	(
+	unsigned long page_num, page_idx, mask;
+	struct free_area_t *area;
+	unsigned int order, index;
+
+	page_num = (
 		((char *) page->addr - (char *) buddy->lmem_map[0].addr)
 		>> PAGE_SHIFT
 	);
 
-	free_pages_ok(buddy, i);
+	page = &buddy->lmem_map[page_num];
+	order = buddy->lmem_map[page_num].order;
+
+	mask = (~0UL) << order;
+	page_idx = GET_NR_PAGE(buddy, (unsigned long) page->addr);
+
+	index = page_idx >> (1 + order);
+
+	area = &buddy->free_area[order];
+	buddy->free_pages -= mask;
+
+	while (mask + (1 << (buddy->max_order - 1))) {
+		if (area >= buddy->free_area + buddy->max_order) {
+			printf("over free_area boundary\n");
+			break;
+		}
+
+		if ( !bitmap_switch(area->map, index) )
+			break;
+
+		page = &buddy->lmem_map[((page_idx) ^ -mask)];
+
+		list_del(&page->list);
+
+		mask <<= 1;
+		area++;
+		index >>= 1;
+		page_idx &= mask;
+	}
+
+	list_add(&area->free_list, &buddy->lmem_map[page_idx].list);
 }
 
 void buddy_show_status(struct buddy_allocator *buddy,
@@ -209,65 +303,68 @@ void buddy_show_status(struct buddy_allocator *buddy,
 //------------------------------------------------------------------------------
 // Local function
 //------------------------------------------------------------------------------
-// ready_for_memory: buddy system 을 위해 필요한 메모리를 할당.
-static void *ready_for_memory(int memsize)
+static int find_fitness_order(int memsize)
 {
-	byte *real_memory = mmap(
-		0, memsize + STRUCT_DATA,
-		PROT_READ | PROT_WRITE | PROT_EXEC,
-		MAP_ANONYMOUS | MAP_PRIVATE, -1, 0
-	);
+	// - 요청한 메모리가 단일 page 크기에 딱 맞아 떨어지는지 확인
+	// - 최소 할당 단위가 PAGE_SIZE 이므로 당연히 PAGE_SIZE 로 정확하게
+	//   나누어 떨어져야 한다. 그렇지 않다면 -1 반환.
+	if ((memsize <= 0) || (memsize % PAGE_SIZE) != 0)
+		return -1;
 
-	printf("memory is ready, address is %p\n", (void *) real_memory);
+	// 메모리 크게에 적합한 max order 를 구한다.
+	if (memsize <= (PAGE_SIZE << (BUDDY_MAX_ORDER - 1))) {
+		for (int i = 0; i < BUDDY_MAX_ORDER; i++) {
+			// mem_size 와 동일한 크기의 단일 page order 라면
+			// 해당 값을 max_order 로 사용한다.
+			if (memsize == (PAGE_SIZE << i))
+				return i;
 
-	return real_memory;
-}
+			if (memsize > (PAGE_SHIFT << i))
+				return i;
+		}
+	}
 
-static int cal_cur_order(unsigned long mem)
-{
-	// 메모리에 맞는 단일 페이지 크기를 탐색한다.
-	for (int i = BUDDY_MAX_ORDER - 1; i >= 0; i--)
-		// 딱 맞아 떨어지는 크기를 찾았다면 해당 ORDER 를 반환한다.
-		if (mem == (PAGE_SIZE << i))
-			return i;
-
-	// ex) buddy 를 위한 물리 메모리로 64KiB 를 잡았고
-	//     단일 페이지의 크기가 4KiB 라면,
-	//     최대로 가질 수 있는 page 의 개수는 16 개(4KiB 만 할당 시)이고
-	//     최소로 가질 수 있는 page 의 개수는 1개이면서, 그 크기는
-	//     PAGE_SIZE << 3 이다. 따라서 ORDER 가 3 인 상태의
-
-	if (mem > (PAGE_SIZE << (BUDDY_MAX_ORDER - 1)))
-		return BUDDY_MAX_ORDER;
-
-	return -1;
+	// mem_size 가 max_order 로 할당 가능한 최대 memory 크기보다 크다면
+	// 당연히 max order 역시 BUDDY SYSTEM 의 MAX ORDER 로 잡는다.
+	return BUDDY_MAX_ORDER;
 }
 
 static struct buddy_allocator *init_memory(int memsize)
 {
 	struct buddy_allocator *buddy;
 	byte *real_memory;
+	int max_order;
 
-	// 요청한 메모리가 page 크기에 맞아 떨어지는지 확인
-	if ((memsize <= 0) || (memsize % PAGE_SIZE) != 0) {
-		printf("allocate size %d bytes, not permitted\t\n", memsize);
+	// memsize 에 적합한 max_order 를 구한다.
+	max_order = find_fitness_order(memsize);
+	if (max_order < 0)
 		return NULL;
-	}
-
+	
 	// 메모리 동적 할당
-	real_memory = ready_for_memory(memsize);
-	if (real_memory == NULL)
+	real_memory = mmap(
+		0, memsize + STRUCT_DATA,
+		PROT_READ | PROT_WRITE | PROT_EXEC,
+		MAP_ANONYMOUS | MAP_PRIVATE, -1, 0
+	);
+
+	if (real_memory == NULL) {
+		printf("failed to allocate %d size memory",
+			memsize + STRUCT_DATA);
 		return NULL;
-/*	buddy system 을 위한 메모리를 할당, 메모리는 아래와 같이 사용된다:
-r-------T-----------T-------------T--------T-----T-------T-------T-----T-------7
-| buddy | free_area | page struct | bitmap | ... | page0 | page1 | ... | pageN |
-L-------^-----------^-------------^--------^-----^-------^-------^-----^-------J
-	... 으로 표시한 영역은 STRUCT_DATA 이다.                              */
+	} else printf("memory is ready, address is %p\n", (void *) real_memory);
+
+/*******************************************************************************
+ * - buddy system 을 위한 메모리를 할당, 메모리는 아래와 같이 사용된다:        *
+ *   r-------T-----------T-------------T--------T----T-----T-----T----T-----7  *
+ *   | buddy | free_area | page struct | bitmap | .. | pg0 | pg1 | .. | pgN |  *
+ *   L-------^-----------^-------------^--------^----^-----^-----^----^-----J  *
+ ******************************************************************************/
+
 	// buddy 구조체 기본 데이터 초기화
 	buddy = ALLOC_FROM_PTR(real_memory, sizeof(struct buddy_allocator));
 	buddy->mem_size = memsize;
-	buddy->max_order = cal_cur_order(buddy->mem_size);
-
+	buddy->max_order = max_order;
+	
 	// free_area 구조체를 위한 공간 할당
 	buddy->free_area = ALLOC_FROM_PTR(real_memory,
 		sizeof(struct free_area_t) * buddy->max_order
@@ -300,6 +397,7 @@ L-------^-----------^-------------^--------^-----^-------^-------^-----^-------J
 			ALLOC_FROM_PTR(real_memory, struct_size),
 			struct_size
 		);
+
 		bitmap_clear(buddy->free_area[i].map);
 	}
 
@@ -313,6 +411,8 @@ L-------^-----------^-------------^--------^-----^-------^-------^-----^-------J
 	return buddy;
 }
 
+// buddy_page_free 에 의해 호출되는 함수로 현재 order 에서 할당 가능한 page 가
+// 없는 경우 상위 free_area list 에서 할당 가능한 page 를 쪼개어 할당.
 static struct page *expand(
 		struct page *page,
 		unsigned long index,
@@ -320,114 +420,44 @@ static struct page *expand(
 		struct free_area_t *area
 	)
 {
-	unsigned long size = 1 << high;
+	unsigned long size = (1 << high);
 
+	// high 는 현재 발견한 상위 free_area list 의 order 이고
+	// low 는 현재 할당을 요청한 page 의 order 이다.
+	// index 는 high order 에 존재하는 page 의 index 를 의미한다.
 	while (high > low) {
+		// 1. (area - 1) 은 하위 order 로 하강함을 의미한다.
+		// 2. (high - 1) 역시 상위 order 를 하강함을 의미한다.
+		// 3. size 역시 2 의 high order 승이므로 같이 맞춰 내린다.
 		area--;
 		high--;
 		size >>= 1;
+
+		// 여기에서 기존 page 를 하강한 free_area list 에 등록하는데
+		// 이렇게 되면 page 의 크기만 반으로 줄어든다. 재미있는 점은
+		// page 의 index 에는 아무런 변화가 일어나지 않는다는 것이다.
 		list_add(&area->free_list, &page->list);
+
+		// 하위 order 에 사용 가능한 page 두 개가 생겼고 (상위 order 의
+		// page 를 한 단계 내렸기 때문에) 그 중 하나는 할당 혹은 다시 
+		// 재귀적으로 쪼갤 것이기에 사용 중으로 표시한다.
 		MARK_USED(area, index, high);
+
+		// index 의 크기를 size 만큼 증가
 		index += size;
+		// 페이지의 역시 size index 만큼 뛰어 넘는다.
 		page += size;
 	}
-	
+
+	// 최종적으로 요청한 order 에 해당하는 page 를 반환한다.
 	return page;
+
+	// - 처음에는 위 코드의 동작 방식이 정확하게 이해되지 않을 수 있다.
+	//   따라서, main 코드를 실행시켜 그 동작을 이해하는 것이 좋다.
+	// - 최초 page 할당 시 어떠한 방식으로 page 가 쪼개지는지 주목하라.
 }
 
-static struct page *__alloc_pages(
-		struct buddy_allocator *buddy,
-		unsigned int order
-	)
-{
-	struct page *page;
-	unsigned int curr_order = order;
-	struct free_area_t *area;
-
-	struct list_head *head, *curr;
-
-	if (buddy->max_order < order)
-		return NULL;
-
-	area = &buddy->free_area[order];
-
-	do {
-		head = &area->free_list;
-		curr = head->next;
-
-		if (curr != head) {
-			unsigned long index;
-
-			page = LIST_ENTRY(curr, struct page, list);
-			list_del(curr);
-			index = GET_NR_PAGE(buddy, (unsigned long) page->addr);
-
-			if (curr_order != buddy->max_order - 1)
-				MARK_USED(area, index, curr_order);
-
-			buddy->free_pages -= (1UL << order);
-
-			page = expand(
-				/* page, index */
-				page, index,
-				/* low, high */
-				order, curr_order,
-				/* free area */
-				area
-			);
-
-			page->order = order;
-
-			return page;
-		}
-
-		curr_order++;
-		area++;
-	} while (curr_order < buddy->max_order);
-
-	return NULL;
-}
-
-static void free_pages_ok(struct buddy_allocator *buddy, int idx)
-{
-	unsigned long index, page_idx, mask;
-	struct page *page;
-	struct free_area_t *area;
-	unsigned int order;
-
-	page = &buddy->lmem_map[idx];
-	order = buddy->lmem_map[idx].order;
-
-	mask = (~0UL) << order;
-	page_idx = GET_NR_PAGE(buddy, (unsigned long) page->addr);
-
-	index = page_idx >> (1 + order);
-
-	area = &buddy->free_area[order];
-	buddy->free_pages -= mask;
-
-	while (mask + (1 << (buddy->max_order - 1))) {
-		if (area >= buddy->free_area + buddy->max_order) {
-			printf("over free_area boundary\n");
-			break;
-		}
-
-		if ( !bitmap_switch(area->map, index) )
-			break;
-
-		page = &buddy->lmem_map[((page_idx) ^ -mask)];
-
-		list_del(&page->list);
-
-		mask <<= 1;
-		area++;
-		index >>= 1;
-		page_idx &= mask;
-	}
-
-	list_add(&area->free_list, &buddy->lmem_map[page_idx].list);
-}
-
+// buddy_show_order_status() 에서 free_area list 간극을 계산하는 함수
 static int calc_gap(int order)
 {
 	if (order <= 0)
@@ -436,12 +466,13 @@ static int calc_gap(int order)
 	return calc_gap(order - 1) * 2 + 1;
 }
 
+// 현재 buddy allocator 의 비트맵 및 free_area list 의 정보를 상세히 출력한다.
 static void buddy_show_order_status(struct buddy_allocator *buddy, int order)
 {
 	struct free_area_t *area;
 	int total_page, find;
 
-	if (buddy->max_order < order)
+	if (buddy->max_order <= order)
 		return ;
 
 	area = &buddy->free_area[order];

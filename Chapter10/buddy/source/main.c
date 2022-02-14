@@ -22,15 +22,22 @@ int free_page(struct buddy_allocator *buddy, struct list_head **main)
 	scanf("%d", &index);
 
 	if (index <= 0) order = -index;
+	else		order = -1;
 
 	LIST_ITERATOR_WITH_ENTRY(*main, entry, struct page_list, head)
 		if (++cnt == index || entry->page->order == order) {
 			buddy_page_free(buddy, entry->page);
-			LIST_ITERATOR_DELETE_ENTRY;
-			free(entry);
 
-			if (&entry->head == *main)
-				*main = NULL;
+			if (&entry->head == *main) {
+				if (entry->head.next == &entry->head)
+					*main = NULL;
+				else
+					*main = entry->head.next;
+			}
+
+			LIST_ITERATOR_DELETE_ENTRY;
+
+			free(entry);
 
 			return 0;
 		}
@@ -65,19 +72,19 @@ FREE_PLIST:	free(new_plist);
 RETURN_ERR:	return -1;
 }
 
-void show_page(struct list_head *main)
+int show_page(struct list_head *main)
 {
 	int index = 0;
 
-	if ( !main ) {
-		printf("No entry!!\n");
-		return ;
-	}
+	if ( !main )
+		return -1;
 
 	LIST_ITERATOR_WITH_ENTRY(main, entry, struct page_list, head)
 		printf("index: %d\t", ++index);
 		printf("order: %d\n", entry->page->order);
 	LIST_ITERATOR_END
+
+	return 0;
 }
 
 int main(void)
@@ -100,13 +107,16 @@ int main(void)
 		       "5. quit \n");
 		printf("Choose menu: "); scanf("%d", &menu);
 		switch (menu) {
-		case 1:	alloc_page(buddy, &main_list);	
+		case 1:	if (alloc_page(buddy, &main_list) < 0)
+				printf("failed to allocate page!\n");
 			break;
 
-		case 2: free_page(buddy, &main_list);
+		case 2: if (free_page(buddy, &main_list) < 0)
+				printf("failed to free page!\n");
 			break;
 
-		case 3: show_page(main_list);
+		case 3: if (show_page(main_list) < 0)
+				printf("failed to show page!\n");
 			break;
 
 		case 4: buddy_show_status(buddy, BUDDY_SHOW_ALL);
@@ -116,8 +126,10 @@ int main(void)
 			break;
 
 		default: printf("invalid menu number\n");
-			 continue;
+			 break;
 		}
+
+		putchar('\n');
 	} WHILE_LOOP_BREAK:
 
 	buddy_destroy(buddy);
