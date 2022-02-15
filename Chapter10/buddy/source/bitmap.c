@@ -5,6 +5,8 @@
 #include <limits.h>	// CHAR_BIT
 #include <string.h>	// memset()
 
+#include "exstdlib.h"
+
 typedef char byte;
 
 #define TYPE_ALIGN(TYPE, X)		( ((X) + ((TYPE) - 1)) / (TYPE) )
@@ -23,7 +25,8 @@ typedef char byte;
 enum bitmap_alloc {
 	BITMAP_ALLOC_BY_MALLOC,
 	BITMAP_ALLOC_ADDR_ONLY,
-	BITMAP_ALLOC_FULL_STRUCT
+	BITMAP_ALLOC_FULL_STRUCT,
+	BITMAP_ALLOC_INVAL
 };
 
 typedef unsigned int btype;
@@ -38,10 +41,8 @@ struct bitmap {
 
 // static void __bitmap_show(btype *map, int index, int shift, bool high_first);
 
-Bitmap __bitmap_create(uint64_t size, void *addr, int addr_size)
+enum bitmap_alloc bitmap_get_type(int size, void *addr, int addr_size)
 {
-	Bitmap bitmap = NULL;
-	btype *map_addr = NULL;
 	enum bitmap_alloc type;
 
 	if (addr != NULL) {
@@ -53,36 +54,46 @@ Bitmap __bitmap_create(uint64_t size, void *addr, int addr_size)
 		else if (addr_size >= addr_only)
 			type = BITMAP_ALLOC_ADDR_ONLY;
 		else
-			return NULL;
+			type = BITMAP_ALLOC_INVAL;
 	} else type = BITMAP_ALLOC_BY_MALLOC;
 
-	switch (type) {
-	case BITMAP_ALLOC_FULL_STRUCT:
-		bitmap = addr;
-		addr = (byte *) addr + sizeof(struct bitmap);
+	return type;
+}
 
-	case BITMAP_ALLOC_ADDR_ONLY:
-		map_addr = addr;
+uint64_t bitmap_to_int(Bitmap map)
+{
+	uint64_t value = 0;
 
-	case BITMAP_ALLOC_BY_MALLOC:
-		if (bitmap == NULL) {
-			bitmap = malloc(sizeof(struct bitmap));
+	return value;
+}
 
-			if (bitmap == NULL)
-				return NULL;
-		}
+Bitmap __bitmap_create(uint64_t size, void *addr, int addr_size)
+{
+	Bitmap bitmap = NULL;
+	btype *map_addr = NULL;
+	enum bitmap_alloc type;
 
+	type = bitmap_get_type(size, addr, addr_size);
+
+	switch (size) {
+	case BITMAP_ALLOC_FULL_STRUCT:	bitmap = addr;
+					PTR_ADD(addr, sizeof(struct bitmap));
+	case BITMAP_ALLOC_ADDR_ONLY:	map_addr = addr;
+	case BITMAP_ALLOC_BY_MALLOC:	break;
+	case BITMAP_ALLOC_INVAL:	return NULL;
+	}
+
+	if (bitmap == NULL) {
+		bitmap = malloc(sizeof(struct bitmap));
+		if (bitmap == NULL)
+			return NULL;
+	}
+
+	if (map_addr == NULL) {
+		map_addr = malloc(BITMAP_INDEX_ALIGN(size) * sizeof(btype));
 		if (map_addr == NULL) {
-			map_addr = malloc(
-				BITMAP_INDEX_ALIGN(size) * sizeof(btype)
-			);
-
-			if (map_addr == NULL) {
-				if (type == BITMAP_ALLOC_BY_MALLOC)
-					free(bitmap);
-
-				return NULL;
-			}
+			if (type == BITMAP_ALLOC_BY_MALLOC) free(bitmap);
+			return NULL;
 		}
 	}
 
@@ -107,9 +118,9 @@ int __bitmap_calc_alloc_size(bool is_full_struct, uint64_t size)
 	return (is_full_struct ? full_struct : addr_only);
 }
 
-void bitmap_clear(Bitmap bitmap)
+void bitmap_clear(Bitmap bitmap, bool value)
 {
-	memset(bitmap->map, 0x00, bitmap->memsize);
+	memset(bitmap->map, value, bitmap->memsize);
 }
 
 bool bitmap_get(Bitmap bitmap, uint64_t pos)
@@ -194,6 +205,7 @@ void bitmap_destroy(Bitmap bitmap)
 		free(bitmap);
 
 	case BITMAP_ALLOC_FULL_STRUCT:
+	case BITMAP_ALLOC_INVAL:
 		/* do nothing */ ;
 	}
 }
