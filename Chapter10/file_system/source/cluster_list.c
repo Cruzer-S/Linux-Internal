@@ -16,7 +16,7 @@ int cluster_list_init(struct cluster_list *clist)
 	return 0;
 }
 
-int cluster_list_push(struct cluster_list *clist, sector cluster)
+int cluster_list_push(struct cluster_list *clist, sector_t cluster)
 {
 	struct cluster_list_element *entry;
 
@@ -51,7 +51,7 @@ int cluster_list_push(struct cluster_list *clist, sector cluster)
 	return 0;
 }
 
-int cluster_list_pop(struct cluster_list *clist, sector *cluster)
+int cluster_list_pop(struct cluster_list *clist, sector_t *cluster)
 {
 	struct cluster_list_element *entry;
 

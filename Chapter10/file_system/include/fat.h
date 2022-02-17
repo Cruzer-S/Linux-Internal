@@ -9,9 +9,9 @@
 typedef unsigned char byte;
 
 enum  fat_type {
-	FAT_TYPE_FAT12	= 0,
-	FAT_TYPE_FAT16	= 1,
-	FAT_TYPE_FAT32	= 2,
+	FAT_TYPE_FAT12	= 0x01,
+	FAT_TYPE_FAT16	= 0x02,
+	FAT_TYPE_FAT32	= 0x04,
 };
 
 enum fat_limit {
@@ -41,10 +41,10 @@ enum  __attribute__ ((__packed__)) fat_attr {
 		                | FAT_ATTR_SYSTEM    | FAT_ATTR_VOLUME_ID,
 };
 
-enum fat_entry_attr {
-	FAT_ENTRY_ATTR_FREE		= 0xE5,
-	FAT_ENTRY_ATTR_NO_MORE		= 0x00,
-	FAT_ENTRY_ATTR_OVERWRITE	= 0x01
+enum fat_dirent_attr {
+	FAT_DIRENT_ATTR_FREE		= 0xE5,
+	FAT_DIRENT_ATTR_NO_MORE		= 0x00,
+	FAT_DIRENT_ATTR_OVERWRITE	= 0x01
 };
 
 enum fat_bit_mask16 {
