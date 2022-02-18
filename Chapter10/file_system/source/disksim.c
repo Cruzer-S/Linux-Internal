@@ -7,11 +7,11 @@ struct disk_memory {
 	void *address;
 };
 
-int disksim_read(struct disk_operations *ops, sector sector, void *data);
-int disksim_write(struct disk_operations *ops, sector sector, const void *data);
+int disksim_read(struct disk_operations *ops, sector_t sector, void *data);
+int disksim_write(struct disk_operations *ops, sector_t sector, const void *data);
 
 int disksim_init(
-	sector number_of_sectors,
+	sector_t number_of_sectors,
 	unsigned int bytes_per_sector,
 	struct disk_operations *disk)
 {
@@ -41,7 +41,7 @@ DISKSIM_UNINIT:	disksim_uninit(disk);
 RETURN_ERR:	return -1;
 }
 
-int disksim_read(struct disk_operations *disk, sector sector, void *data)
+int disksim_read(struct disk_operations *disk, sector_t sector, void *data)
 {
 	char *disk_addr;
 	int index;
@@ -57,8 +57,11 @@ int disksim_read(struct disk_operations *disk, sector sector, void *data)
 	return 0;
 }
 
-int disksim_write(struct disk_operations *disk, sector sector, const void *data)
-{
+int disksim_write(
+		struct disk_operations *disk,
+		sector_t sector,
+		const void *data
+) {
 	char *disk_addr;
 	int index;
 

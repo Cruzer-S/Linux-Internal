@@ -27,7 +27,7 @@ enum fat_eoc {
 	FAT_MS_EOC16	= 0xFFFF,
 
 	FAT_EOC32	= 0x0FFFFFF8,
-	FAT_MS_EOC32	= 0x0FFFFFFF
+	FAT_MS_EOC32	= 0x0FFFFFFF,
 };
 
 enum  __attribute__ ((__packed__)) fat_attr {
@@ -121,7 +121,7 @@ struct fat_fsinfo {
 	uint32_t trail_signature;
 };
 
-struct fat_dir_entry {
+struct fat_dirent {
 	byte name[FAT_LIMIT_ENTRY_NAME_LENGTH];
 	enum fat_attr attribute;	// enum fat_attr is packed, 1-byte
 	byte nt_reserved;
@@ -179,7 +179,7 @@ struct fat_entry_location {
 
 struct fat_node {
 	struct fat_filesystem		*fs;
-	struct fat_dir_entry		entry;
+	struct fat_dirent		entry;
 	struct fat_entry_location	location;
 };
 
