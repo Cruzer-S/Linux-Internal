@@ -13,6 +13,6 @@ struct disk_operations {
 };
 
 int disksim_init(sector_t , unsigned int, struct disk_operations* );
-int disksim_uninit(struct disk_operations *);
+void disksim_uninit(struct disk_operations );
 
 #endif

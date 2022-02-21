@@ -37,7 +37,7 @@ int disksim_init(
 	return 0;
 
 FREE_DISK_PDATA:free(disk->pdata);
-DISKSIM_UNINIT:	disksim_uninit(disk);
+DISKSIM_UNINIT:	disksim_uninit(*disk);
 RETURN_ERR:	return -1;
 }
 
@@ -74,4 +74,12 @@ int disksim_write(
 	memcpy(&disk_addr[index], data, disk->bytes_per_sector);
 
 	return 0;
+}
+
+void disksim_uninit(struct disk_operations ops)
+{
+	if (ops.pdata) {
+		free ( ((struct disk_memory *) ops.pdata)->address );
+		free(ops.pdata);
+	}
 }

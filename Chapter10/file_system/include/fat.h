@@ -185,7 +185,7 @@ struct fat_node {
 
 typedef int (*fat_node_add_func)(void *, struct fat_node *);
 
-void fat_unmount(struct fat_filesystem *);
+void fat_umount(struct fat_filesystem *);
 
 int fat_read_superblock(struct fat_filesystem *, struct fat_node *);
 int fat_read_dir(struct fat_node *, fat_node_add_func , void *);

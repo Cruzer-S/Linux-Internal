@@ -33,11 +33,9 @@ static uint32_t get_sector_per_cluster16(uint64_t , uint32_t );
 static uint32_t get_sector_per_cluster32(uint64_t , uint32_t );
 static uint32_t get_sector_per_cluster(enum fat_type , uint64_t, uint32_t );
 static void fill_fat_size(struct fat_bpb *, enum fat_type );
-static int fill_bpb(struct fat_bpb *, enum fat_type , sector_t , uint32_t );
 static int create_root(struct disk_operations *, struct fat_bpb *);
 static int fill_reserved_fat(struct fat_bpb *, byte *);
 static int clear_fat(struct disk_operations *, struct fat_bpb *);
-static int fat_format(struct disk_operations *, enum fat_type );
 */
 static struct fat_entry_location get_entry_location(const struct fat_dirent * );
 static int has_sub_entries(
@@ -107,10 +105,13 @@ static int insert_entry(
 static void upper_string(char *, int );
 static int format_name(struct fat_filesystem *, char *);
 static int free_cluster_chain(struct fat_filesystem *, uint32_t );
+
+static int fat_format(struct disk_operations *, enum fat_type );
+static int fill_bpb(struct fat_bpb *, enum fat_type , sector_t , uint32_t );
 // -----------------------------------------------------------------------------
 // global function
 // -----------------------------------------------------------------------------
-void fat_unmount(struct fat_filesystem *fs)
+void fat_umount(struct fat_filesystem *fs)
 {
 	cluster_list_release(&fs->cluster_list);
 }
@@ -1290,6 +1291,59 @@ int has_sub_entries(struct fat_filesystem *fs, const struct fat_dirent *dirent)
 
 	if ( !lookup_entry(fs, &begin, NULL, &sub_entry) )
 		return -1;
+
+	return 0;
+}
+
+int fat_format(struct disk_operations *disk, enum fat_type type)
+{
+	struct fat_bpb bpb;
+
+	// if (fill_bpb());
+	return 0;
+}
+
+int fill_bpb(
+		struct fat_bpb *bpb, enum fat_type type,
+		sector_t number_of_sectors, uint32_t bytes_per_sector
+) {
+	uint64_t disk_size = number_of_sectors / bytes_per_sector;
+	struct fat_boot_sector *bs;
+	byte file_system_type[][8] = { "FAT12", "FAT16", "FAT32" };
+	uint32_t sectors_per_cluster;
+
+	if (type > FAT_TYPE_FAT32)
+		return -1;
+
+	memset(bpb, 0x00, sizeof(struct fat_bpb));
+	bpb->jmp_boot[0] = 0xEB;
+	bpb->jmp_boot[1] = 0x00;
+	bpb->jmp_boot[2] = 0x90;
+
+	memcpy(bpb->oem_name, "mythos", 8);
+
+	sectors_per_cluster = get_sector_per_cluster(
+		type, disk_size, bytes_per_sector
+	);
+	if (sectors_per_cluster == 0) {
+		return -1;
+	}
+
+	bpb->bytes_per_sector = bytes_per_sector;
+	bpb->sectors_per_cluster = sectors_per_cluster;
+	bpb->reserved_sector_count = ((type == FAT_TYPE_FAT32) ? 32 : 1);
+	bpb->number_of_fats = 1;
+	bpb->root_entry_count = (type == FAT_TYPE_FAT32 ? 0 : 512);
+	bpb->total_sectors = ((number_of_sectors < 0x10000) 
+			   ? (uint16_t) number_of_sectors : 0);
+
+	bpb->media = 0xF8;
+	fill_fat_size(bpb, type);
+
+	bpb->sectors_per_track = 0;
+	bpb->number_of_heads = 0;
+	bpb->total_sectors32 = (number_of_sectors >= 0x10000 
+			     ? number_of_sectors : 0);
 
 	return 0;
 }
