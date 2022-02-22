@@ -1,5 +1,6 @@
 #include "fat.h"
 
+#include <stdio.h>	// for the printf()
 #include <string.h>	// for the memset()
 #include <ctype.h>	// for the isalnum()
 
@@ -18,7 +19,7 @@
 	)
 
 #define SET_FIRST_CLUSTER(ENTRY, CLUSTER) do {					\
-	(ENTRY).first_cluster_hi <<= 16;					\
+	(ENTRY).first_cluster_hi = ((CLUSTER) >> 16);				\
 	(ENTRY).first_cluster_lo = (uint16_t) ((CLUSTER) & 0xFFFF);		\
 } while (false)
 
@@ -27,16 +28,15 @@
 // -----------------------------------------------------------------------------
 // local function prototype
 // -----------------------------------------------------------------------------
-/* Never used
+static int fill_reserved_fat(struct fat_bpb *, byte *);
+static int create_root(struct disk_operations *, struct fat_bpb *);
+static void fill_fat_size(struct fat_bpb *, enum fat_type );
+
 static uint32_t get_sector_per_clusterN(uint32_t [][2], uint64_t , uint32_t );
+static uint32_t get_sector_per_cluster(enum fat_type , uint64_t, uint32_t );
 static uint32_t get_sector_per_cluster16(uint64_t , uint32_t );
 static uint32_t get_sector_per_cluster32(uint64_t , uint32_t );
-static uint32_t get_sector_per_cluster(enum fat_type , uint64_t, uint32_t );
-static void fill_fat_size(struct fat_bpb *, enum fat_type );
-static int create_root(struct disk_operations *, struct fat_bpb *);
-static int fill_reserved_fat(struct fat_bpb *, byte *);
-static int clear_fat(struct disk_operations *, struct fat_bpb *);
-*/
+
 static struct fat_entry_location get_entry_location(const struct fat_dirent * );
 static int has_sub_entries(
 		struct fat_filesystem *, const struct fat_dirent *
@@ -49,6 +49,8 @@ static int prepare_fat_sector(
 		struct fat_filesystem *, sector_t ,
 		sector_t *, uint32_t *, byte *
 );
+
+static int clear_fat(struct disk_operations *, struct fat_bpb *);
 
 static enum fat_eoc get_fat(struct fat_filesystem *, sector_t );
 static int set_fat(struct fat_filesystem *, sector_t , uint32_t );
@@ -105,12 +107,34 @@ static int insert_entry(
 static void upper_string(char *, int );
 static int format_name(struct fat_filesystem *, char *);
 static int free_cluster_chain(struct fat_filesystem *, uint32_t );
-
-static int fat_format(struct disk_operations *, enum fat_type );
 static int fill_bpb(struct fat_bpb *, enum fat_type , sector_t , uint32_t );
 // -----------------------------------------------------------------------------
 // global function
 // -----------------------------------------------------------------------------
+int fat_format(struct disk_operations *disk, enum fat_type type)
+{
+	struct fat_bpb bpb;
+
+	if (fill_bpb(&bpb, type, disk->number_of_sectors, 
+		     disk->bytes_per_sector) != 0)
+		return -1;
+
+	disk->write_sector(disk, 0, &bpb);
+
+	printf("bytes per sector: %u\n", bpb.bytes_per_sector);
+	printf("sectors per cluster: %u\n", bpb.sectors_per_cluster);
+	printf("number of FATs: %u\n", bpb.number_of_fats);
+	printf("root entry count: %u\n", bpb.root_entry_count);
+	printf("total sectors: %u\n", bpb.total_sectors ? bpb.total_sectors 
+				                        : bpb.total_sectors32);
+	putchar('\n');
+
+	clear_fat(disk, &bpb);
+	create_root(disk, &bpb);
+
+	return 0;
+}
+
 void fat_umount(struct fat_filesystem *fs)
 {
 	cluster_list_release(&fs->cluster_list);
@@ -152,7 +176,7 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 	if (fs->bpb.fat_size16 != 0)
 		fs->fat_size = fs->bpb.fat_size16;
 	else
-		fs->fat_size = fs->bpb.bpb32.fat_size_32;
+		fs->fat_size = fs->bpb.bpb32.fat_size32;
 
 	cluster_list_init(&fs->cluster_list);
 	search_free_clusters(fs);
@@ -516,7 +540,7 @@ enum fat_type get_fat_type(struct fat_bpb *bpb)
 	if (bpb->fat_size16 != 0)
 		fat_size = bpb->fat_size16;
 	else
-		fat_size = bpb->bpb32.fat_size_32;
+		fat_size = bpb->bpb32.fat_size32;
 
 	if (bpb->total_sectors != 0)
 		total_sectors = bpb->total_sectors;
@@ -777,7 +801,7 @@ int search_free_clusters(struct fat_filesystem *fs)
 	if (fs->bpb.fat_size16 != 0)
 		fat_size = fs->bpb.fat_size16;
 	else
-		fat_size = fs->bpb.bpb32.fat_size_32;
+		fat_size = fs->bpb.bpb32.fat_size32;
 
 	if (fs->bpb.total_sectors != 0)
 		total_sectors = fs->bpb.total_sectors;
@@ -1295,12 +1319,15 @@ int has_sub_entries(struct fat_filesystem *fs, const struct fat_dirent *dirent)
 	return 0;
 }
 
-int fat_format(struct disk_operations *disk, enum fat_type type)
+const char *fat_type_to_string(enum fat_type type)
 {
-	struct fat_bpb bpb;
+	switch (type) {
+	case FAT_TYPE_FAT12: return "FAT12";
+	case FAT_TYPE_FAT16: return "FAT16";
+	case FAT_TYPE_FAT32: return "FAT32";
+	}
 
-	// if (fill_bpb());
-	return 0;
+	return NULL;
 }
 
 int fill_bpb(
@@ -1308,9 +1335,8 @@ int fill_bpb(
 		sector_t number_of_sectors, uint32_t bytes_per_sector
 ) {
 	uint64_t disk_size = number_of_sectors / bytes_per_sector;
-	struct fat_boot_sector *bs;
-	byte file_system_type[][8] = { "FAT12", "FAT16", "FAT32" };
 	uint32_t sectors_per_cluster;
+	struct fat_boot_sector *bs;
 
 	if (type > FAT_TYPE_FAT32)
 		return -1;
@@ -1344,6 +1370,215 @@ int fill_bpb(
 	bpb->number_of_heads = 0;
 	bpb->total_sectors32 = (number_of_sectors >= 0x10000 
 			     ? number_of_sectors : 0);
+
+	if (type == FAT_TYPE_FAT32) {
+		bpb->bpb32.exflags = 0x0081;
+		bpb->bpb32.filesystem_version = 0;
+		bpb->bpb32.root_cluster = 2;
+		bpb->bpb32.filesystem_info = 1;
+		bpb->bpb32.backup_boot_sectors = 6;
+		bpb->bpb32.backup_boot_sectors = 0;
+		memset(bpb->bpb32.reserved, 0x00, 12);
+	}
+
+	if (type == FAT_TYPE_FAT32)
+		bs = &bpb->bpb32.bs;
+	else
+		bs = &bpb->bs;
+
+	if (type == FAT_TYPE_FAT12)
+		bs->drive_number = 0x00;
+	else
+		bs->drive_number = 0x80;
+
+	bs->reserved1 = 0;
+	bs->boot_signature = 0x29;
+	bs->volume_id = 0;
+	memcpy(bs->volume_label, "mythos fat", 11);
+	memcpy(bs->filesystem_type, fat_type_to_string(type), 8);
+
+	return 0;
+}
+
+uint32_t get_sector_per_cluster(
+		enum fat_type type, uint64_t disk_size,
+		uint32_t bytes_per_sector
+) {
+	switch(type) {
+	case FAT_TYPE_FAT12:
+		return 1;
+
+	case FAT_TYPE_FAT16:
+		return get_sector_per_cluster16(disk_size, bytes_per_sector);
+
+	case FAT_TYPE_FAT32:
+		return get_sector_per_cluster32(disk_size, bytes_per_sector);
+	}
+
+	return 0;
+}
+
+uint32_t get_sector_per_cluster16(uint64_t disk_size, uint32_t bytes_per_sector)
+{
+	uint32_t disk_table_fat16[][2] = {
+		{ 8400,		0	},
+		{ 32680,	2	},
+		{ 262144,	4	},
+		{ 524288,	8	},
+		{ 1048576,	16	},
+		{ 2097152,	32	},
+		{ 4194304,	64	},
+		{ 0xFFFFFFFF,	0	}
+	};
+
+	return get_sector_per_clusterN(
+		disk_table_fat16, disk_size, bytes_per_sector
+	);
+}
+
+uint32_t get_sector_per_cluster32(uint64_t disk_size, uint32_t bytes_per_sector)
+{
+	uint32_t disk_table_fat32[][2] = {
+		{ 66600,	0	},
+		{ 532480,	1	},
+		{ 16777216,	8	},
+		{ 33554432,	16	},
+		{ 67108864,	32	},
+		{ 0xFFFFFFFF,	64	}
+	};
+
+	return get_sector_per_clusterN(
+		disk_table_fat32, disk_size, bytes_per_sector
+	);
+}
+
+uint32_t get_sector_per_clusterN(
+		uint32_t disk_table[][2], uint64_t disk_size, uint32_t bytes_per_sector
+) {
+	int i = 0;
+
+	do {
+		if ( ((uint64_t) (disk_table[i][0] * 512)) >= disk_size )
+			return disk_table[i][1] / (bytes_per_sector / 512);
+	} while (disk_table[i++][0] < 0xFFFFFFFF);
+
+	return 0;
+}
+
+void fill_fat_size(struct fat_bpb *bpb, enum fat_type type)
+{
+	uint32_t disk_size = (bpb->total_sectors32 == 0 ? bpb->total_sectors 
+			                                : bpb->total_sectors32);
+	uint32_t root_dir_sectors = (
+		(bpb->root_entry_count * 32) + (bpb->bytes_per_sector - 1)
+	) / bpb->bytes_per_sector;
+
+	uint32_t tmp1 = disk_size - (
+		bpb->reserved_sector_count + root_dir_sectors
+	),	 tmp2 = (256 * bpb->sectors_per_cluster) + bpb->number_of_fats;
+	uint32_t fat_size;
+
+	if (type == FAT_TYPE_FAT32)
+		tmp2 = tmp2 / 2;
+
+	fat_size = (tmp1 + (tmp2 - 1)) / tmp2;
+
+	if (type == FAT_TYPE_FAT32) {
+		bpb->fat_size16 = 0;
+		bpb->bpb32.fat_size32 = fat_size;
+	} else {
+		bpb->fat_size16 = (uint16_t) fat_size & 0xFFFF;
+	}
+}
+
+int clear_fat(struct disk_operations *disk, struct fat_bpb *bpb)
+{
+	uint32_t end;
+	uint32_t fat_size;
+	sector_t fat_sector;
+	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
+
+	memset(sector, 0x00, sizeof(sector));
+	fat_sector = bpb->reserved_sector_count;
+
+	if (bpb->fat_size16 != 0)
+		fat_size = bpb->fat_size16;
+	else
+		fat_size = bpb->bpb32.fat_size32;
+
+	end = fat_sector + (fat_size * bpb->number_of_fats);
+
+	fill_reserved_fat(bpb, sector);
+	disk->write_sector(disk, fat_sector, sector);
+
+	memset(sector, 0x00, sizeof(sector));
+	for (uint32_t i = fat_sector + 1; i < end; i++)
+		disk->write_sector(disk, i, sector);
+
+	return 0;
+}
+
+int fill_reserved_fat(struct fat_bpb *bpb, byte *sector)
+{
+	enum fat_type type;
+	uint32_t *shut_errbit12;
+	uint16_t *shut_bit16;
+	uint16_t *err_bit16;
+	uint32_t *shut_bit32;
+	uint32_t *err_bit32;
+
+	type = get_fat_type(bpb);
+	switch (type) {
+	case FAT_TYPE_FAT12:
+		shut_errbit12 = (uint32_t *) sector;
+
+		*shut_errbit12 = 0xFF0 << 20;
+		*shut_errbit12 |= ((uint32_t) bpb->media &0x0F) << 20;
+		*shut_errbit12 |= FAT_MS_EOC12 << 8;
+		break;
+
+	case FAT_TYPE_FAT16:
+		shut_bit16 = (uint16_t *) sector;
+		err_bit16 = (uint16_t *) sector + sizeof(uint16_t);
+
+		*shut_bit16 = 0xFFF0 | bpb->media;
+		*err_bit16 = FAT_MS_EOC16;
+		break;
+
+	case FAT_TYPE_FAT32:
+		shut_bit32 = (uint32_t *) sector;
+		err_bit32 = (uint32_t *) sector + sizeof(uint32_t);
+
+		*shut_bit32 = 0x0FFFFFFF0 | bpb->media;
+		*err_bit32 = FAT_MS_EOC32;
+		break;
+	}
+
+	return 0;
+}
+
+int create_root(struct disk_operations *disk, struct fat_bpb *bpb)
+{
+	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
+	sector_t root_sector = 0;
+	struct fat_dirent *entry;
+
+	memset(sector, 0x00, FAT_LIMIT_MAX_SECTOR_SIZE);
+	entry = (struct fat_dirent *) sector;
+
+	memcpy(entry->name, "mythos fat", FAT_LIMIT_ENTRY_NAME_LENGTH);
+	entry->attribute = FAT_ATTR_VOLUME_ID;
+
+	(++entry)->name[0] = FAT_DIRENT_ATTR_NO_MORE;
+	if (get_fat_type(bpb) == FAT_TYPE_FAT32) {
+		/* Not implemented yet */
+	} else {
+		root_sector = bpb->reserved_sector_count + (
+			bpb->number_of_fats * bpb->fat_size16
+		);
+	}
+
+	disk->write_sector(disk, root_sector, sector);
 
 	return 0;
 }

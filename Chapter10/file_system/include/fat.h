@@ -67,7 +67,7 @@ enum fat_bit_mask32 {
 
 struct fat_boot_sector {
 	byte		drive_number;
-	byte		flags;
+	byte		reserved1;
 	byte		boot_signature;
 	uint32_t	volume_id;
 	byte		volume_label[11];
@@ -97,7 +97,7 @@ struct fat_bpb {
 		struct fat_boot_sector bs;
 
 		struct {
-			uint32_t	fat_size_32;
+			uint32_t	fat_size32;
 			uint16_t	exflags;
 			uint16_t	filesystem_version;
 			uint32_t	root_cluster;
@@ -201,5 +201,7 @@ int fat_write(struct fat_node *, unsigned long, unsigned long, const char *);
 
 int fat_remove(struct fat_node *);
 int fat_df(struct fat_filesystem *, uint32_t *, uint32_t *);
+
+int fat_format(struct disk_operations *, enum fat_type );
 
 #endif /* end of #ifndef FAT_H__ */

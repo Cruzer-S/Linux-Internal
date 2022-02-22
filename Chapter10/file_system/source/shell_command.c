@@ -386,8 +386,7 @@ int shell_cmd_cat(struct shell *shell, int argc, char *argv[])
 	offset = 0;
 	while (shell->fops.file_ops->read(
 			&shell->disk, &shell->fops, &shell->curdir,
-			&entry, offset, 1024, buffer
-	) > 0) {
+			&entry, offset, 1024, buffer) > 0) {
 		printf("%s", buffer);
 		offset += 1024;
 		memset(buffer, 0x00, sizeof(buffer));
