@@ -51,6 +51,7 @@ struct shell *shell_create(void)
 
 	ret->commands = shell_cmd_list_get_list();
 	ret->command_count = shell_cmd_list_get_size();
+	ret->is_mounted = false;
 	shell_register_filesystem(&ret->filesystem);
 
 	if (disksim_init(NUMBER_OF_SECTORS, SECTOR_SIZE, &ret->disk) < 0) {
@@ -70,7 +71,7 @@ int shell_run(struct shell *shell)
 	printf("%s file system shell\n", shell->filesystem.name);
 
 	while (true) {
-		printf("[%s] # ", shell->curdir.name);
+		printf("[/%s] # ", shell->curdir.name);
 		fgets(buffer, BUFSIZ - 1, stdin);
 		argc = seperate_string(buffer, argv);
 

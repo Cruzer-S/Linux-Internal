@@ -7,11 +7,12 @@
 #include <string.h>
 #include <stdlib.h>
 
-struct shell_command shell_command_list[] = {
+static struct shell_command shell_command_list[] = {
 	{	"cd",		shell_cmd_cd,		CMD_COND_MOUNT	},
 	{	"exit",		shell_cmd_exit,		CMD_COND_NONE	},
 	{	"quit",		shell_cmd_exit,		CMD_COND_NONE	},
-	{	"mount",	shell_cmd_umount,	CMD_COND_UMOUNT	},
+	{	"mount",	shell_cmd_mount,	CMD_COND_UMOUNT	},
+	{	"umount",	shell_cmd_umount,	CMD_COND_MOUNT	},
 	{	"touch",	shell_cmd_touch,	CMD_COND_MOUNT	},
 	{	"fill",		shell_cmd_fill,		CMD_COND_MOUNT	},
 	{	"rm",		shell_cmd_rm,		CMD_COND_MOUNT	},
@@ -98,16 +99,17 @@ int shell_cmd_mount(struct shell *shell, int argc, char *argv[])
 	result = shell->filesystem.mount(
 		&shell->disk, &shell->fops, &shell->rootdir
 	);
-
 	if (result < 0) {
 		printf("%s file system mounting has been failed!\n",
 			shell->filesystem.name);
 		return -1;
-	} else {
-		printf("%s file system has been mounted successfully\n",
-			shell->filesystem.name);
-		shell->is_mounted = true;
 	}
+
+	printf("%s file system has been mounted successfully\n",
+		shell->filesystem.name);
+
+	shell->curdir = shell->rootdir;
+	shell->is_mounted = true;
 
 	return 0;
 }
@@ -134,7 +136,7 @@ int shell_cmd_touch(struct shell *shell, int argc, char *argv[])
 		return 0;
 	}
 
-	result = shell->fops.file_ops->create(
+	result = shell->fops.file_ops.create(
 		&shell->disk,
 		&shell->fops,
 		&shell->curdir,
@@ -164,7 +166,7 @@ int shell_cmd_fill(struct shell *shell, int argc, char *argv[])
 
 	sscanf(argv[2], "%d", &size);
 
-	result = shell->fops.file_ops->create(
+	result = shell->fops.file_ops.create(
 		&shell->disk, &shell->fops, &shell->curdir, argv[1], &entry
 	);
 
@@ -181,7 +183,7 @@ int shell_cmd_fill(struct shell *shell, int argc, char *argv[])
 		tmp += 13;
 	}
 
-	shell->fops.file_ops->write(
+	shell->fops.file_ops.write(
 		&shell->disk, &shell->fops, &shell->curdir, 
 		&entry, 0, size, buffer
 	);
@@ -199,7 +201,7 @@ int shell_cmd_rm(struct shell *shell, int argc, char *argv[])
 	}
 
 	for (int i = 0; i < argc; i++) {
-		if (shell->fops.file_ops->remove(
+		if (shell->fops.file_ops.remove(
 				&shell->disk, &shell->fops,
 				&shell->curdir, argv[i]
 		))
@@ -219,6 +221,7 @@ int shell_cmd_ls(struct shell *shell, int argc, char *argv[])
 	}
 
 	shell_entry_list_init(&main);
+
 	if (shell->fops.read_dir(
 			&shell->disk, &shell->fops, &shell->curdir, &main
 	)) {
@@ -226,18 +229,12 @@ int shell_cmd_ls(struct shell *shell, int argc, char *argv[])
 		return -1;
 	}
 
-	for (struct list_head *track = main.head;
-	     track != NULL;
-	     track = track->next)
-	{
-		struct shell_entry *entry = LIST_ENTRY(
-			track, struct shell_entry, list
-		);
-
-		printf("%-12s %1d %12d\n",
+	printf("%-12s %3s %12s\n", "[File name]", "[D]", "[File size]");
+	LIST_ITERATOR_WITH_ENTRY(main.head, entry, struct shell_entry, list)
+		printf("%-12s %3d %12d\n",
 			entry->name, entry->is_dir, entry->size
 		);
-	} putchar('\n');
+	LIST_ITERATOR_END putchar('\n');
 
 	shell_entry_list_release(&main);
 
@@ -384,7 +381,7 @@ int shell_cmd_cat(struct shell *shell, int argc, char *argv[])
 	}
 
 	offset = 0;
-	while (shell->fops.file_ops->read(
+	while (shell->fops.file_ops.read(
 			&shell->disk, &shell->fops, &shell->curdir,
 			&entry, offset, 1024, buffer) > 0) {
 		printf("%s", buffer);

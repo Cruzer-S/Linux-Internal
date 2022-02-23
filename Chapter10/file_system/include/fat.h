@@ -203,5 +203,6 @@ int fat_remove(struct fat_node *);
 int fat_df(struct fat_filesystem *, uint32_t *, uint32_t *);
 
 int fat_format(struct disk_operations *, enum fat_type );
+const char *fat_type_to_string(enum fat_type type);
 
 #endif /* end of #ifndef FAT_H__ */

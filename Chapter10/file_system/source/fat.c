@@ -104,7 +104,6 @@ static int insert_entry(
 		enum fat_dirent_attr 
 );
 
-static void upper_string(char *, int );
 static int format_name(struct fat_filesystem *, char *);
 static int free_cluster_chain(struct fat_filesystem *, uint32_t );
 static int fill_bpb(struct fat_bpb *, enum fat_type , sector_t , uint32_t );
@@ -150,7 +149,7 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 	if (fs->disk->read_sector(fs->disk, 0, &fs->bpb))
 		return -1;
 
-	if (validate_bpb(&fs->bpb))
+	if (validate_bpb(&fs->bpb) != 0)
 		return -1;
 
 	fs->type = get_fat_type(&fs->bpb);
@@ -181,7 +180,7 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 	cluster_list_init(&fs->cluster_list);
 	search_free_clusters(fs);
 
-	memset(root->entry.name, 0x20, 11);
+	memset(root->entry.name, 0x20, FAT_LIMIT_ENTRY_NAME_LENGTH);
 
 	return 0;
 }
@@ -193,7 +192,7 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 	struct fat_entry_location location;
 
 	if ((IS_POINT_ROOT_ENTRY(dir->entry))
-	&&  (dir->fs->type == (FAT_TYPE_FAT12 | FAT_TYPE_FAT16)))
+	&&  (dir->fs->type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16)))
 	{
 		if (dir->fs->type == FAT_TYPE_FAT32)
 			return -1;
@@ -707,7 +706,7 @@ int set_fat(struct fat_filesystem *fs, sector_t cluster, uint32_t value)
 int validate_bpb(struct fat_bpb *bpb)
 {
 	if ( !(bpb->jmp_boot[0] == 0xEB && bpb->jmp_boot[2] == 0x90)
-	  && !(bpb->jmp_boot[0] = 0xE9))
+	&&   !(bpb->jmp_boot[0] == 0xE9                            ))
 		return -1;
 
 	return 0;
@@ -1134,7 +1133,7 @@ int set_entry(
 
 int insert_entry(
 		const struct fat_node *parent, struct fat_node *new_entry, 
-		enum fat_dirent_attr overwirte
+		enum fat_dirent_attr overwrite
 )
 {
 	struct fat_entry_location begin;
@@ -1154,8 +1153,9 @@ int insert_entry(
 	type = &parent->fs->type;
 	fs = parent->fs;
 
-	if ( ( !IS_POINT_ROOT_ENTRY(*dirent)		 )
-	&&   ( *type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) ) ) {
+	if ( ( !(IS_POINT_ROOT_ENTRY(*dirent))		 )
+	&&   ( *type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) ) 
+	&&   ( overwrite != FAT_DIRENT_ATTR_NO_MORE)     ) {
 		begin.number = 0;
 
 		set_entry(fs, &begin, &new_entry->entry);
@@ -1178,8 +1178,8 @@ int insert_entry(
 		return 0;
 	}
 
-	if ((IS_POINT_ROOT_ENTRY(*dirent))
-	&&  (*type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16))) {
+	if ( ( IS_POINT_ROOT_ENTRY(*dirent)              )
+	&&   ( *type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) ) ) {
 		uint32_t root_entry_count;
 
 		root_entry_count = new_entry->location.sector * (
@@ -1191,24 +1191,23 @@ int insert_entry(
 	}
 
 	entry_name[0] = FAT_DIRENT_ATTR_NO_MORE;
-	if (lookup_entry(fs, &begin, (char *) entry_name, &entry_no_more) == -1)
+	if (lookup_entry(fs, &begin, (char *) entry_name, &entry_no_more) != 0)
 		return -1;
 
 	set_entry(fs, &entry_no_more.location, &new_entry->entry);
-
 	new_entry->location = entry_no_more.location;
 	entry_no_more.location.number++;
 
-	if (entry_no_more.location.number
-	==  (bpb->bytes_per_sector / sizeof(struct fat_dirent))) 
+	if ( ( entry_no_more.location.number                     )
+	==   ( bpb->bytes_per_sector / sizeof(struct fat_dirent) ) )
 	{
 		entry_no_more.location.sector++;
 		entry_no_more.location.number = 0;
 
 		if (entry_no_more.location.sector == bpb->sectors_per_cluster)
 		{
-			if( !(IS_POINT_ROOT_ENTRY(*dirent)) 
-			&& (*type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16))) 
+			if( ( !(IS_POINT_ROOT_ENTRY(*dirent))           )
+			&&  ( *type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) ) ) 
 			{
 				entry_no_more.location.cluster =
 					span_cluster_chain(
@@ -1218,6 +1217,8 @@ int insert_entry(
 
 				if (entry_no_more.location.cluster == 0)
 					return -1;
+
+				entry_no_more.location.sector = 0;
 			}
 		}
 	}
@@ -1240,14 +1241,6 @@ int free_cluster_chain(struct fat_filesystem *fs, uint32_t first_cluster)
 	}
 
 	return 0;
-}
-
-void upper_string(char *str, int length)
-{
-	while (*str && length-- > 0) {
-		*str = toupper(*str);
-		str++;
-	}
 }
 
 int format_name(struct fat_filesystem *fs, char *name)
@@ -1273,8 +1266,6 @@ int format_name(struct fat_filesystem *fs, char *name)
 	}
 
 	if (fs->type != FAT_TYPE_FAT32) {
-		upper_string(name, FAT_LIMIT_ENTRY_NAME_LENGTH);
-
 		for (uint32_t i = 0; i < length; i++) {
 			if (name[i] != '.' && !isalnum(name[i]))
 				return -1;
@@ -1284,20 +1275,20 @@ int format_name(struct fat_filesystem *fs, char *name)
 					return -1;
 
 				extender = 1;
-			} else if ( !isalnum(name[i]) ) {
+			} else if ( isalnum(name[i]) ) {
 				if (extender)
 					regular_name[
 						extender_current++
 					] = name[i];
-
-				extender = 1;
+				else
+					regular_name[name_length++] = name[i];
 			} else {
 				return -1;
 			}
 		}
 
-		if (name_length > 8 || name_length == 0 || 
-		    extender_current > FAT_LIMIT_ENTRY_NAME_LENGTH)
+		if (name_length > 8 || name_length == 0
+		||  extender_current > FAT_LIMIT_ENTRY_NAME_LENGTH)
 			return -1;
 	}
 

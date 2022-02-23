@@ -1,6 +1,8 @@
 #ifndef SHELL_ENTRY_H_
 #define SHELL_ENTRY_H_
 
+#include "list.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -33,7 +35,7 @@ struct shell_entry {
 
 	char pdata[1024];
 
-	struct list_head *list;
+	struct list_head list;
 };
 
 struct shell_entry_list {

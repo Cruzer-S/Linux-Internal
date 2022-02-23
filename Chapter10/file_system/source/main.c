@@ -9,8 +9,7 @@ int main(int argc, char *argv[])
 
 	shell = shell_create();
 	
-	while (shell_run(shell))
-		/* do nothing */ ;
+	while (shell_run(shell)) ;
 
 	shell_destroy(shell);
 
