@@ -396,3 +396,31 @@ int shell_cmd_cat(struct shell *shell, int argc, char *argv[])
 
 	return 0;
 }
+
+int shell_cmd_mkdirst(struct shell *shell, int argc, char *argv[])
+{
+	struct shell_entry entry;
+	int result, count;
+	char buffer[10];
+
+	if (argc != 2) {
+		printf("usage: %s <count>\n", argv[0]);
+		return 0;
+	}
+
+	sscanf(argv[1], "%d", &count);
+	for (int i = 0; i < count; i++) {
+		sprintf(buffer, "%d", i);
+		result = shell->fops.mkdir(
+			&shell->disk, &shell->fops,
+			&shell->curdir, buffer, &entry
+		);
+
+		if ( result != 0 ) {
+			printf("cannot create directory\n");
+			return -1;
+		}
+	}
+
+	return 0;
+}

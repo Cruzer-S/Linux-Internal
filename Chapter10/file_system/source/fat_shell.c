@@ -86,7 +86,6 @@ static int fs_create(
 	fat_entry_to_shell_entry(&fat_entry, ret);
 
 	return result;
-	return 0;
 }
 
 static int fs_remove(
@@ -332,4 +331,14 @@ int fs_format(struct disk_operations *disk, void *param)
 	printf("formatting as a %s\n", fat_type_string[type_idx]);
 
 	return fat_format(disk, fat_type[type_idx]);
+}
+
+void shell_register_filesystem(struct shell_filesystem *fs)
+{
+	*fs = (struct shell_filesystem) {
+		.name = "FAT",
+		.mount = fs_mount,
+		.umount = fs_umount,
+		.format = fs_format
+	};
 }

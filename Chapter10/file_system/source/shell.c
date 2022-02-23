@@ -58,7 +58,7 @@ struct shell *shell_create(void)
 		return NULL;
 	}
 
-	return 0;
+	return ret;
 }
 
 int shell_run(struct shell *shell)

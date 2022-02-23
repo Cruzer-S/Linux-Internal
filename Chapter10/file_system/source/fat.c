@@ -1170,7 +1170,7 @@ int insert_entry(
 	}
 
 	entry_name[0] = FAT_DIRENT_ATTR_FREE;
-	if (lookup_entry(fs, &begin, (char *) entry_name, &entry_no_more) == 0) 
+	if (lookup_entry(fs, &begin, (char *) entry_name, &entry_no_more) == 0)
 	{
 		set_entry(fs, &entry_no_more.location, &new_entry->entry);
 		new_entry->location = entry_no_more.location;
