@@ -25,7 +25,6 @@
 /*******************************************************************************
  * struct, union, enum definition
  ******************************************************************************/
-
 /* None */
 
 /*******************************************************************************
@@ -34,9 +33,9 @@
 static void shell_show_commands(struct shell *shell);
 extern void shell_register_filesystem(struct shell_filesystem *);
 
-bool check_conditions(struct shell *shell, int cmdidx);
-int seperate_string(char *buffer, char *ptrs[]);
-void shell_show_commands(struct shell *shell);
+static bool check_conditions(struct shell *shell, int cmdidx);
+static int seperate_string(char *buffer, char *ptrs[]);
+static void shell_show_commands(struct shell *shell);
 
 /*******************************************************************************
  * global function definition
@@ -52,6 +51,7 @@ struct shell *shell_create(void)
 	ret->commands = shell_cmd_list_get_list();
 	ret->command_count = shell_cmd_list_get_size();
 	ret->is_mounted = false;
+	ret->path_top = 0;
 	shell_register_filesystem(&ret->filesystem);
 
 	if (disksim_init(NUMBER_OF_SECTORS, SECTOR_SIZE, &ret->disk) < 0) {

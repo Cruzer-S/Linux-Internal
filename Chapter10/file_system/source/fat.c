@@ -247,7 +247,7 @@ int fat_mkdir(
 		return -1;
 
 	memset(ret, 0x00, sizeof(struct fat_node));
-	memcpy(ret->entry.name, name, FAT_LIMIT_MAX_NAME_LENGTH);
+	memcpy(ret->entry.name, name, FAT_LIMIT_ENTRY_NAME_LENGTH);
 	ret->entry.attribute = FAT_ATTR_DIRECTORY;
 	first_cluster = alloc_free_cluster(parent->fs);
 
@@ -901,7 +901,7 @@ sector_t alloc_free_cluster(struct fat_filesystem * fs)
 {
 	sector_t cluster;
 
-	if ( !cluster_list_pop(&fs->cluster_list, &cluster) )
+	if ( cluster_list_pop(&fs->cluster_list, &cluster) != 0 )
 		return 0;
 
 	return cluster;
@@ -1293,6 +1293,7 @@ int format_name(struct fat_filesystem *fs, char *name)
 	}
 
 	memcpy(name, regular_name, sizeof(regular_name));
+
 	return 0;
 }
 

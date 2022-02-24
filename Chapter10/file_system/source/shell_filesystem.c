@@ -35,6 +35,15 @@ struct fat_entry {
 // -----------------------------------------------------------------------------
 // local function
 // -----------------------------------------------------------------------------
+static char *stpncpy_ex(char *dest, char *orig, char *stop, int size)
+{
+	while ( ( *orig != EOF                  ) 
+	&&      ( (strchr(stop, *orig)) == NULL )
+	&&      ( (size--) > 0                  ) )
+		*dest++ = *orig++;
+
+	return dest;
+}
 static int fat_entry_to_shell_entry(
 		const struct fat_node *fat_entry,
 		struct shell_entry *shell_entry
@@ -45,11 +54,11 @@ static int fat_entry_to_shell_entry(
 	memset(shell_entry, 0x00, sizeof(struct shell_entry));
 	if (entry->entry.attribute != FAT_ATTR_VOLUME_ID) {
 		str = shell_entry->name;
-		str = stpncpy(str, (char *) fat_entry->entry.name, 8);
+		str = stpncpy_ex(str, (char *) fat_entry->entry.name, " ", 8);
 		if (fat_entry->entry.name[8] != 0x20) {
-			str = stpncpy(str, ".", 1);
-			str = strncpy(
-				str, (char *) &fat_entry->entry.name[8], 3
+			str = stpncpy_ex(str, ".", " ", 1);
+			str = stpncpy_ex(
+				str, (char *) &fat_entry->entry.name[8], " ", 3
 			);
 		}
 	}
@@ -100,7 +109,9 @@ static int fs_remove(
 	struct fat_node fat_parent, file;
 
 	shell_entry_to_fat_entry(parent, &fat_parent);
-	fat_lookup(&fat_parent, name, &file);
+	if (fat_lookup(&fat_parent, name, &file) != 0)
+		return -1;
+
 	return fat_remove(&file);
 }
 
@@ -142,7 +153,6 @@ static int adder(void *list, struct fat_node *entry)
 	struct shell_entry new_entry;
 
 	fat_entry_to_shell_entry(entry, &new_entry);
-	list_init(&new_entry.list);
 	shell_entry_list_add(entry_list, &new_entry);
 
 	return 0;
@@ -162,32 +172,25 @@ static int fs_read_dir(
 	return 0;
 }
 
-static int is_exist(
+static bool is_exist(
 		struct disk_operations *disk, struct shell_fs_operations *fops,
 		const struct shell_entry *parent, const char *name)
 {
 	struct shell_entry_list list;
+	bool find = false;
 
 	shell_entry_list_init(&list);
 	fs_read_dir(disk, fops, parent, &list);
 
-	for (struct list_head *track = list.head;
-	     track != NULL;
-	     track = track->next)
-	{
-		struct shell_entry *entry = LIST_ENTRY(
-			track, struct shell_entry ,list
-		);
-
+	LIST_ITERATOR_WITH_ENTRY(list.head, entry, struct shell_entry, list)
 		if (strncmp(entry->name, name, 12) == 0) {
-			shell_entry_list_release(&list);
-			return -1;
+			find = true;
+			LIST_ITERATOR_BREAK;
 		}
-	}
+	LIST_ITERATOR_END
 
 	shell_entry_list_release(&list);
-
-	return 0;
+	return find;
 }
 
 static int fs_mkdir(
@@ -207,7 +210,6 @@ static int fs_mkdir(
 	fat_entry_to_shell_entry(&fat_entry, ret);
 
 	return result;
-	return 0;
 }
 
 static int fs_rmdir(
@@ -237,7 +239,6 @@ static int fs_lookup(
 	fat_entry_to_shell_entry(&fat_entry, entry);
 
 	return result;
-	return 0;
 }
 /*******************************************************************************
  * export function

@@ -17,6 +17,9 @@ struct shell {
 	struct shell_filesystem filesystem;
 	struct shell_fs_operations fops;
 	struct shell_entry rootdir, curdir;
+
+	struct shell_entry path[256];
+	int path_top;
 };
 
 struct shell *shell_create(void);

@@ -39,11 +39,8 @@ int shell_cmd_list_get_size(void)
 int shell_cmd_cd(struct shell *shell, int argc, char *argv[])
 {
 	struct shell_entry new_entry;
-	struct shell_entry path[256];
-
-	int path_top = 0;
-
-	path[0] = shell->rootdir;
+	
+	shell->path[0] = shell->rootdir;
 
 	if (argc > 2) {
 		printf("usage: %s <directory>\n", argv[0]);
@@ -51,14 +48,14 @@ int shell_cmd_cd(struct shell *shell, int argc, char *argv[])
 	}
 
 	if (argc == 1) {
-		path_top = 0;
+		shell->path_top = 0;
 		goto SET_CUR_DIR;
 	}
 
 	if (strcmp(argv[1], ".") == 0) {
 		return 0;
-	} else if (strcmp(argv[1], "..") == 0 && path_top > 0) {
-		path_top--;
+	} else if (strcmp(argv[1], "..") == 0 && shell->path_top > 0) {
+		shell->path_top--;
 	} else {
 		int result = shell->fops.lookup(
 			&shell->disk, &shell->fops, 
@@ -74,11 +71,11 @@ int shell_cmd_cd(struct shell *shell, int argc, char *argv[])
 			return -1;
 		}
 
-		path[++path_top] = new_entry;
+		shell->path[++shell->path_top] = new_entry;
 	}
 
-SET_CUR_DIR: shell->curdir = path[path_top];
-
+SET_CUR_DIR:
+	shell->curdir = shell->path[shell->path_top];
 	return 0;
 }
 
@@ -116,11 +113,10 @@ int shell_cmd_mount(struct shell *shell, int argc, char *argv[])
 
 int shell_cmd_umount(struct shell *shell, int argc, char *argv[])
 {
-	shell->is_mounted = false;
-
 	if (shell->filesystem.mount == NULL)
-		return 0;
+		return -1;
 
+	shell->is_mounted = false;
 	shell->filesystem.umount(&shell->disk, &shell->fops);
 
 	return 0;
@@ -200,7 +196,7 @@ int shell_cmd_rm(struct shell *shell, int argc, char *argv[])
 		return 0;
 	}
 
-	for (int i = 0; i < argc; i++) {
+	for (int i = 1; i < argc; i++) {
 		if (shell->fops.file_ops.remove(
 				&shell->disk, &shell->fops,
 				&shell->curdir, argv[i]
