@@ -1,5 +1,9 @@
 #include "list.h"
 
+static void __list_add(
+		struct list_head *, struct list_head *, struct list_head *
+);
+
 void list_init(struct list_head *head)
 {
 	head->next = head;
@@ -8,13 +12,7 @@ void list_init(struct list_head *head)
 
 void list_add(struct list_head *head, struct list_head *new)
 {
-	// link with (new) <=> (head->next)
-	head->next->prev = new;
-	new->next = head->next;
-
-	// link with (head) <=> (new)
-	new->prev = head;
-	head->next = new;
+	__list_add(head, new, head->next);
 }
 
 void list_del(struct list_head *entry)
@@ -27,9 +25,16 @@ void list_del(struct list_head *entry)
 
 void list_add_tail(struct list_head *head, struct list_head *new)
 {
-	head->prev->next = new;
-	new->prev = head->prev;
+	__list_add(head->prev, new, head);
+}
 
-	head->prev = new;
-	new->next = head;
+static void __list_add(struct list_head *prev, struct list_head *new, struct list_head *next)
+{
+	/*
+	 * prev <-> new <-> next
+	 */
+	next->prev = new;
+	new->next = next;
+	new->prev = prev;
+	prev->next = new;
 }

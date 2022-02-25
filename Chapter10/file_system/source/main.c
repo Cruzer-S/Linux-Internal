@@ -8,7 +8,7 @@ int main(int argc, char *argv[])
 	struct shell *shell;
 
 	shell = shell_create();
-	
+
 	while (shell_run(shell)) ;
 
 	shell_destroy(shell);

@@ -17,7 +17,7 @@
 #include <ctype.h>
 
 /*******************************************************************************
- * preprocessor directives definition 
+ * preprocessor directives definition
  ******************************************************************************/
 #define NUMBER_OF_SECTORS 4096
 #define SECTOR_SIZE 512
@@ -41,8 +41,8 @@ static void shell_show_commands(struct shell *shell);
  * global function definition
  ******************************************************************************/
 struct shell *shell_create(void)
-{	
-	struct shell *ret; 
+{
+	struct shell *ret;
 
 	ret = malloc(sizeof(struct shell));
 	if ( !ret )
@@ -67,7 +67,7 @@ int shell_run(struct shell *shell)
 	char buffer[BUFSIZ];
 	char *argv[BUFSIZ];
 	int argc;
-	
+
 	printf("%s file system shell\n", shell->filesystem.name);
 
 	while (true) {
@@ -89,7 +89,7 @@ int shell_run(struct shell *shell)
 					if (retval == -256)
 						return 0;
 				}
-				
+
 				break;
 			}
 		}
@@ -135,7 +135,6 @@ void shell_show_commands(struct shell *shell)
 
 	putchar('\n');
 }
-
 
 int seperate_string(char *buffer, char *ptrs[])
 {

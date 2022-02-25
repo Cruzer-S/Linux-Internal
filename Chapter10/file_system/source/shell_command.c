@@ -175,7 +175,7 @@ int shell_cmd_fill(struct shell *shell, int argc, char *argv[])
 	tmp = buffer;
 
 	while (tmp < buffer + size) {
-		memcpy(tmp, "can you see?", 13);
+		memcpy(tmp, "can you see? ", 13);
 		tmp += 13;
 	}
 
@@ -358,7 +358,7 @@ int shell_cd_mkdirst(struct shell *shell, int argc, char *argv[])
 int shell_cmd_cat(struct shell *shell, int argc, char *argv[])
 {
 	struct shell_entry entry;
-	char buffer[1024];
+	char buffer[BUFSIZ];
 	int result;
 	unsigned long offset;
 
@@ -379,10 +379,10 @@ int shell_cmd_cat(struct shell *shell, int argc, char *argv[])
 	offset = 0;
 	while (shell->fops.file_ops.read(
 			&shell->disk, &shell->fops, &shell->curdir,
-			&entry, offset, 1024, buffer) > 0) {
+			&entry, offset, BUFSIZ, buffer) > 0) {
 		printf("%s", buffer);
-		offset += 1024;
-		memset(buffer, 0x00, sizeof(buffer));
+		offset += BUFSIZ;
+		memset(buffer, 0x00, BUFSIZ);
 	}
 
 	putchar('\n');

@@ -20,7 +20,7 @@ struct cluster_list {
 	uint32_t	push_offset;
 	uint32_t	pop_offset;
 
-	struct list_head *first, *last;
+	struct list_head *head;
 };
 
 int cluster_list_init(struct cluster_list *);

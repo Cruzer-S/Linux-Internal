@@ -601,7 +601,7 @@ int get_fat_sector(struct fat_filesystem *fs, sector_t cluster,
 	*fat_sector = fs->bpb.reserved_sector_count + (
 		fat_offset / fs->bpb.bytes_per_sector
 	);
-	*fat_entry_offset = fat_offset & fs->bpb.bytes_per_sector;
+	*fat_entry_offset = fat_offset % fs->bpb.bytes_per_sector;
 
 	return 0;
 }
@@ -873,7 +873,7 @@ bool is_eoc(enum fat_type type, sector_t cluster_number)
 {
 	switch (type) {
 	case FAT_TYPE_FAT12:
-		if (FAT_EOC12 <= (cluster_number * 0x0FFF))
+		if (FAT_EOC12 <= (cluster_number & 0x0FFF))
 			return -1;
 		break;
 
@@ -1326,7 +1326,7 @@ int fill_bpb(
 		struct fat_bpb *bpb, enum fat_type type,
 		sector_t number_of_sectors, uint32_t bytes_per_sector
 ) {
-	uint64_t disk_size = number_of_sectors / bytes_per_sector;
+	uint64_t disk_size = number_of_sectors * bytes_per_sector;
 	uint32_t sectors_per_cluster;
 	struct fat_boot_sector *bs;
 
