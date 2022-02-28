@@ -226,6 +226,8 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 				))
 					break;
 			}
+
+			i = get_fat(dir->fs, i);
 		} while ( (!is_eoc(dir->fs->type, i)) && (i != 0) );
 	}
 
