@@ -52,6 +52,7 @@ struct shell *shell_create(void)
 	ret->command_count = shell_cmd_list_get_size();
 	ret->is_mounted = false;
 	ret->path_top = 0;
+
 	shell_register_filesystem(&ret->filesystem);
 
 	if (disksim_init(NUMBER_OF_SECTORS, SECTOR_SIZE, &ret->disk) < 0) {
@@ -71,7 +72,11 @@ int shell_run(struct shell *shell)
 	printf("%s file system shell\n", shell->filesystem.name);
 
 	while (true) {
-		printf("[/%s] # ", shell->curdir.name);
+		if (shell->path_top == 0)
+			fputs("[/] # ", stdout);
+		else
+			printf("[/%s] # ", shell->curdir.name);
+
 		fgets(buffer, BUFSIZ - 1, stdin);
 		argc = seperate_string(buffer, argv);
 
@@ -88,14 +93,19 @@ int shell_run(struct shell *shell)
 
 					if (retval == -256)
 						return 0;
+				} else {
+					puts("this command is currently "
+					     "unavailable!\n");
 				}
 
 				break;
 			}
 		}
 
-		if (shell->command_count == i)
+		if (shell->command_count == i) {
+			puts("unknown command!");
 			shell_show_commands(shell);
+		}
 	}
 
 	return -1;
