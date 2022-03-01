@@ -52,8 +52,8 @@ static int prepare_fat_sector(
 
 static int clear_fat(struct disk_operations *, struct fat_bpb *);
 
-static enum fat_eoc get_fat(struct fat_filesystem *, sector_t );
-static int set_fat(struct fat_filesystem *, sector_t , uint32_t );
+static uint32_t get_fat_entry(struct fat_filesystem *, sector_t );
+static int set_fat_entry(struct fat_filesystem *, sector_t , uint32_t );
 static int validate_bpb(struct fat_bpb *);
 
 static int read_root_sector(struct fat_filesystem *, sector_t , byte *);
@@ -163,12 +163,12 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 	memcpy(&root->entry, sector, sizeof(struct fat_dirent));
 	root->fs = fs;
 
-	fs->eoc_mask = get_fat(fs, 1);
+	fs->eoc_mark = get_fat_entry(fs, 1);
 	if (fs->type == FAT_TYPE_FAT32) {
-		if (fs->eoc_mask & (FAT_BIT_MASK16_SHUT | FAT_BIT_MASK32_ERR))
+		if (fs->eoc_mark & (FAT_BIT_MASK16_SHUT | FAT_BIT_MASK32_ERR))
 			return -1;
 	} else if (fs->type == FAT_TYPE_FAT16) {
-		if (fs->eoc_mask & (FAT_BIT_MASK16_SHUT | FAT_BIT_MASK16_ERR))
+		if (fs->eoc_mark & (FAT_BIT_MASK16_SHUT | FAT_BIT_MASK16_ERR))
 			return -1;
 	}
 
@@ -227,7 +227,7 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 					break;
 			}
 
-			i = get_fat(dir->fs, i);
+			i = get_fat_entry(dir->fs, i);
 		} while ( (!is_eoc(dir->fs->type, i)) && (i != 0) );
 	}
 
@@ -256,7 +256,7 @@ int fat_mkdir(
 	if (first_cluster == 0)
 		return -1;
 
-	set_fat(parent->fs, first_cluster, get_ms_eoc(parent->fs->type));
+	set_fat_entry(parent->fs, first_cluster, get_ms_eoc(parent->fs->type));
 
 	SET_FIRST_CLUSTER(ret->entry, first_cluster);
 	result = insert_entry(parent, ret, FAT_DIRENT_ATTR_NO_MORE);
@@ -369,7 +369,7 @@ int fat_read(
 
 	while (offset > cluster_offset)
 	{
-		current_cluster = get_fat(file->fs, current_cluster);
+		current_cluster = get_fat_entry(file->fs, current_cluster);
 		cluster_offset += cluster_size;
 
 		cluster_seq++;
@@ -382,7 +382,7 @@ int fat_read(
 		cluster_number = current_offset / cluster_size;
 		if (cluster_seq != cluster_number) {
 			cluster_seq++;
-			current_cluster = get_fat(file->fs, current_cluster);
+			current_cluster = get_fat_entry(file->fs, current_cluster);
 		}
 
 		sector_number = (
@@ -429,7 +429,7 @@ int fat_write(
 		     * file->fs->bpb.sectors_per_cluster;
 
 	while (offset > cluster_size) {
-		current_cluster = get_fat(file->fs, current_cluster);
+		current_cluster = get_fat_entry(file->fs, current_cluster);
 		cluster_size += cluster_size;
 		cluster_seq ++;
 	}
@@ -437,21 +437,26 @@ int fat_write(
 	while (current_offset < read_end) {
 		uint32_t copy_length;
 
-		cluster_number = current_offset / cluster_size;
+		cluster_number = current_offset / (
+			file->fs->bpb.bytes_per_sector 
+		      * file->fs->bpb.sectors_per_cluster
+		);
 		if (current_cluster == 0) {
 			current_cluster = alloc_free_cluster(file->fs);
 			if (current_cluster == 0)
 				return -1;
+
 			SET_FIRST_CLUSTER(file->entry, current_cluster);
-			set_fat(file->fs, current_cluster,
-			        get_ms_eoc(file->fs->type));
+			set_fat_entry(file->fs,
+				      current_cluster,
+			              get_ms_eoc(file->fs->type));
 		}
 
 		if (cluster_seq != cluster_number) {
 			uint32_t next_cluster;
 			cluster_seq++;
 
-			next_cluster = get_fat(file->fs, current_cluster);
+			next_cluster = get_fat_entry(file->fs, current_cluster);
 			if (is_eoc(file->fs->type, next_cluster)) {
 				next_cluster = span_cluster_chain(
 					file->fs, current_cluster
@@ -627,7 +632,7 @@ int prepare_fat_sector(
 	return 0;
 }
 
-enum fat_eoc get_fat(struct fat_filesystem *fs, sector_t cluster)
+uint32_t get_fat_entry(struct fat_filesystem *fs, sector_t cluster)
 {
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE * 2];
 	sector_t fat_sector;
@@ -659,7 +664,7 @@ enum fat_eoc get_fat(struct fat_filesystem *fs, sector_t cluster)
 	return -1;
 }
 
-int set_fat(struct fat_filesystem *fs, sector_t cluster, uint32_t value)
+int set_fat_entry(struct fat_filesystem *fs, sector_t cluster, uint32_t value)
 {
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE * 2];
 	sector_t fat_sector;
@@ -817,7 +822,7 @@ int search_free_clusters(struct fat_filesystem *fs)
 	count_of_clusters = data_sector / fs->bpb.sectors_per_cluster;
 
 	for (int i = 2; i < count_of_clusters; i++) {
-		cluster = get_fat(fs, i);
+		cluster = get_fat_entry(fs, i);
 		if (cluster == 0x00)
 			add_free_cluster(fs, i);
 	}
@@ -916,8 +921,8 @@ sector_t span_cluster_chain(struct fat_filesystem *fs, sector_t cluster_number)
 	next_cluster = alloc_free_cluster(fs);
 
 	if (next_cluster) {
-		set_fat(fs, cluster_number, next_cluster);
-		set_fat(fs, next_cluster, get_ms_eoc(fs->type));
+		set_fat_entry(fs, cluster_number, next_cluster);
+		set_fat_entry(fs, next_cluster, get_ms_eoc(fs->type));
 	}
 
 	return next_cluster;
@@ -1071,7 +1076,7 @@ int find_entry_on_data(
 			return 0;
 		}
 
-		next_cluster = get_fat(fs, current_cluster);
+		next_cluster = get_fat_entry(fs, current_cluster);
 
 		if (is_eoc(fs->type, next_cluster))
 			break;
@@ -1236,8 +1241,8 @@ int free_cluster_chain(struct fat_filesystem *fs, uint32_t first_cluster)
 	uint32_t next_cluster;
 
 	while ( !is_eoc(fs->type, current_cluster) && current_cluster != 0x00) {
-		next_cluster = get_fat(fs, current_cluster);
-		set_fat(fs, current_cluster, 0x00);
+		next_cluster = get_fat_entry(fs, current_cluster);
+		set_fat_entry(fs, current_cluster, 0x00);
 		add_free_cluster(fs, current_cluster);
 		current_cluster = next_cluster;
 	}

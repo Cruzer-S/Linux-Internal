@@ -65,16 +65,14 @@ int cluster_list_pop(struct cluster_list *clist, sector_t *cluster)
 		return -1;
 
 	entry = LIST_ENTRY(
-		clist->head, 
+		clist->head,
 		struct cluster_list_element,
 		list
 	);
-	if (entry == NULL)
-		return -1;
 
 	*cluster = entry->clusters[clist->pop_offset++];
 	clist->count--;
-
+	
 	if (clist->pop_offset == CLUSTER_LIST_CLUSTER_PER_ELEMENT) {	
 		list_del(&entry->list);
 		if (clist->head == clist->tail)
@@ -84,7 +82,7 @@ int cluster_list_pop(struct cluster_list *clist, sector_t *cluster)
 
 		clist->pop_offset = 0;
 		free(entry);
-	}
+	}	
 
 	return 0;
 }

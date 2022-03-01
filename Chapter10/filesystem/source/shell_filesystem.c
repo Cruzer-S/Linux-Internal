@@ -21,18 +21,6 @@
 #include <stdlib.h>
 
 // -----------------------------------------------------------------------------
-// define struct, union, enum
-// -----------------------------------------------------------------------------
-struct fat_entry {
-	union {
-		uint16_t half_cluster[2];
-		uint32_t full_cluster;
-	};
-
-	byte attribute;
-};
-
-// -----------------------------------------------------------------------------
 // local function
 // -----------------------------------------------------------------------------
 static char *stpncpy_ex(char *dest, char *orig, char *stop, int size)
@@ -76,28 +64,17 @@ static int fat_entry_to_shell_entry(
 	return 0;
 }
 
-static int shell_entry_to_fat_entry(
-		const struct shell_entry *shell_entry,
-		struct fat_node *fat_entry
-) {
-	struct fat_node *entry = (struct fat_node *) shell_entry->pdata;
-
-	*fat_entry = *entry;
-
-	return 0;
-}
-
 static int fs_create(
 		struct disk_operations *disk, struct shell_fs_operations *fops,
 		const struct shell_entry *parent, const char *name,
 		struct shell_entry *ret
 ) {
-	struct fat_node fat_parent, fat_entry;
+	struct fat_node *fat_parent, fat_entry;
 	int result;
 
-	shell_entry_to_fat_entry(parent, &fat_parent);
-	result = fat_create(&fat_parent, name, &fat_entry);
-	fat_entry_to_shell_entry(&fat_entry, ret);
+	fat_parent = (struct fat_node *) parent->pdata;
+	result = fat_create(fat_parent, name, &fat_entry);
+	*((struct fat_node *) ret->pdata) = fat_entry;
 
 	return result;
 }
@@ -106,10 +83,9 @@ static int fs_remove(
 		struct disk_operations *disk, struct shell_fs_operations *fops,
 		const struct shell_entry *parent, const char *name
 ) {
-	struct fat_node fat_parent, file;
+	struct fat_node file;
 
-	shell_entry_to_fat_entry(parent, &fat_parent);
-	if (fat_lookup(&fat_parent, name, &file) != 0)
+	if (fat_lookup((struct fat_node *) parent->pdata, name, &file) != 0)
 		return -1;
 
 	return fat_remove(&file);
@@ -121,9 +97,7 @@ static int fs_read(
 		const struct shell_entry *entry,
 		unsigned long offset ,unsigned long length, char *buffer
 ) {
-	struct fat_node fat_entry;
-	shell_entry_to_fat_entry(entry, &fat_entry);
-	return fat_read(&fat_entry, offset, length, buffer);
+	return fat_read((struct fat_node *) entry->pdata, offset, length, buffer);
 }
 
 static int fs_write(
@@ -131,9 +105,7 @@ static int fs_write(
 		const struct shell_entry *parent, struct shell_entry *entry,
 		unsigned long offset, unsigned long length, const char *buffer
 ) {
-	struct fat_node fat_entry;
-	shell_entry_to_fat_entry(entry, &fat_entry);
-	return fat_write(&fat_entry, offset, length, buffer);
+	return fat_write((struct fat_node *) entry->pdata, offset, length, buffer);
 }
 
 static int fs_stat(
@@ -166,7 +138,7 @@ static int fs_read_dir(
 	if (list->count)
 		shell_entry_list_release(list);
 
-	shell_entry_to_fat_entry(parent, &entry);
+	entry = *((struct fat_node *) parent->pdata);
 	fat_read_dir(&entry, adder, list);
 
 	return 0;
@@ -205,7 +177,7 @@ static int fs_mkdir(
 	if (is_exist(disk, fops, parent, name))
 		return -1;
 
-	shell_entry_to_fat_entry(parent, &fat_parent);
+	fat_parent = *((struct fat_node *) parent->pdata);
 	result = fat_mkdir(&fat_parent, name, &fat_entry);
 	fat_entry_to_shell_entry(&fat_entry, ret);
 
@@ -219,8 +191,7 @@ static int fs_rmdir(
 	struct fat_node fat_parent;
 	struct fat_node dir;
 
-	shell_entry_to_fat_entry(parent, &fat_parent);
-
+	fat_parent = *((struct fat_node *) parent->pdata);
 	fat_lookup(&fat_parent, name, &dir);
 
 	return fat_rmdir(&dir);
@@ -234,7 +205,7 @@ static int fs_lookup(
 	struct fat_node fat_parent, fat_entry;
 	int result;
 
-	shell_entry_to_fat_entry(parent, &fat_parent);
+	fat_parent = *((struct fat_node *) parent->pdata);
 	result = fat_lookup(&fat_parent, name, &fat_entry);
 	fat_entry_to_shell_entry(&fat_entry, entry);
 

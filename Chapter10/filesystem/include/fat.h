@@ -151,7 +151,7 @@ struct fat_dirent {
 struct fat_filesystem {
 	enum fat_type	type;
 	uint32_t	fat_size;
-	enum fat_eoc	eoc_mask;
+	uint32_t	eoc_mark;
 	struct fat_bpb	bpb;
 
 	struct cluster_list cluster_list;
