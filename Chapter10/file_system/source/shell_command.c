@@ -26,7 +26,7 @@ static struct shell_command shell_command_list[] = {
 	{	"cat",		shell_cmd_cat,		CMD_COND_MOUNT	}
 };
 
-struct shell_command *shell_cmd_list_get_list(void) 
+struct shell_command *shell_cmd_list_get_list(void)
 {
 	return shell_command_list;
 }
@@ -39,7 +39,7 @@ int shell_cmd_list_get_size(void)
 int shell_cmd_cd(struct shell *shell, int argc, char *argv[])
 {
 	struct shell_entry new_entry;
-	
+
 	shell->path[0] = shell->rootdir;
 
 	if (argc > 2) {
@@ -58,7 +58,7 @@ int shell_cmd_cd(struct shell *shell, int argc, char *argv[])
 		shell->path_top--;
 	} else {
 		int result = shell->fops.lookup(
-			&shell->disk, &shell->fops, 
+			&shell->disk, &shell->fops,
 			&shell->curdir, &new_entry,
 			argv[1]
 		);
@@ -76,6 +76,7 @@ int shell_cmd_cd(struct shell *shell, int argc, char *argv[])
 
 SET_CUR_DIR:
 	shell->curdir = shell->path[shell->path_top];
+
 	return 0;
 }
 
