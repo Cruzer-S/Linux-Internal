@@ -152,8 +152,7 @@ int shell_cmd_touch(struct shell *shell, int argc, char *argv[])
 int shell_cmd_fill(struct shell *shell, int argc, char *argv[])
 {
 	struct shell_entry entry;
-	char *buffer, *bufptr;
-	int ntimes, bufsize, wordsize;
+	int ntimes, bufsiz;
 
 	if (argc < 3) {
 		printf("usage: fill <file> <string> [ntimes]\n");
@@ -172,26 +171,13 @@ int shell_cmd_fill(struct shell *shell, int argc, char *argv[])
 		return -3;
 	}
 
-	wordsize = strlen(argv[2]);
-	bufsize = wordsize * ntimes;
-	buffer = malloc(bufsize);
-	if (buffer == NULL) {
-		printf("An uncontrollable error has occurred!\n");
-		return -4;
-	}
-
-	bufptr = buffer;
+	bufsiz = strlen(argv[2]);
 	for (int i = 0; i < ntimes; i++) {
-		memcpy(bufptr, argv[2], wordsize);
-		bufptr += wordsize;
+		shell->fops.file_ops.write(
+			&shell->disk, &shell->fops, &shell->curdir, 
+			&entry, i * bufsiz, bufsiz, argv[2] 
+		);
 	}
-
-	shell->fops.file_ops.write(
-		&shell->disk, &shell->fops, &shell->curdir, 
-		&entry, 0, bufsize, buffer
-	);
-
-	free(buffer);
 
 	return 0;
 }
