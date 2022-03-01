@@ -28,8 +28,11 @@ void list_add_tail(struct list_head *head, struct list_head *new)
 	__list_add(head->prev, new, head);
 }
 
-static void __list_add(struct list_head *prev, struct list_head *new, struct list_head *next)
-{
+static void __list_add(
+		struct list_head *prev,
+		struct list_head *new,
+		struct list_head *next
+) {
 	/*
 	 * prev <-> new <-> next
 	 */
