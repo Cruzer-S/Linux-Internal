@@ -152,37 +152,43 @@ int shell_cmd_touch(struct shell *shell, int argc, char *argv[])
 int shell_cmd_fill(struct shell *shell, int argc, char *argv[])
 {
 	struct shell_entry entry;
-	char *buffer;
-	char *tmp;
-	int size, result;
+	char *buffer, *bufptr;
+	int ntimes, bufsize, wordsize;
 
-	if (argc != 3) {
-		printf("usage: fill <file> <size>\n");
-		return 0;
-	}
-
-	sscanf(argv[2], "%d", &size);
-
-	result = shell->fops.file_ops.create(
-		&shell->disk, &shell->fops, &shell->curdir, argv[1], &entry
-	);
-
-	if ( result != 0 ) {
-		printf("create failed\n");
+	if (argc < 3) {
+		printf("usage: fill <file> <string> [ntimes]\n");
 		return -1;
+	} else if (argc == 4) {
+		if (sscanf(argv[3], "%d", &ntimes) != 1) {
+			printf("[ntimes] not a number!\n");
+			return -2;
+		}
+	} else ntimes = 1;
+
+	if (shell->fops.lookup(
+		&shell->disk, &shell->fops, &shell->curdir, &entry, argv[1]
+	) != 0) {
+		printf("cannot find file %s!\n", argv[1]);
+		return -3;
 	}
 
-	buffer = (char *) malloc(size + 13);
-	tmp = buffer;
+	wordsize = strlen(argv[2]);
+	bufsize = wordsize * ntimes;
+	buffer = malloc(bufsize);
+	if (buffer == NULL) {
+		printf("An uncontrollable error has occurred!\n");
+		return -4;
+	}
 
-	while (tmp < buffer + size) {
-		memcpy(tmp, "can you see? ", 13);
-		tmp += 13;
+	bufptr = buffer;
+	for (int i = 0; i < ntimes; i++) {
+		memcpy(bufptr, argv[2], wordsize);
+		bufptr += wordsize;
 	}
 
 	shell->fops.file_ops.write(
 		&shell->disk, &shell->fops, &shell->curdir, 
-		&entry, 0, size, buffer
+		&entry, 0, bufsize, buffer
 	);
 
 	free(buffer);
