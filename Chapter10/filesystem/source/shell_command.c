@@ -22,7 +22,6 @@ static struct shell_command shell_command_list[] = {
 	{	"df",		shell_cmd_df,		CMD_COND_MOUNT	},
 	{	"mkdir",	shell_cmd_mkdir,	CMD_COND_MOUNT	},
 	{	"rmdir",	shell_cmd_rmdir,	CMD_COND_MOUNT	},
-	{	"mkdirst",	shell_cmd_mkdirst,	CMD_COND_MOUNT	},
 	{	"cat",		shell_cmd_cat,		CMD_COND_MOUNT	}
 };
 
@@ -314,35 +313,6 @@ int shell_cmd_rmdir(struct shell *shell, int argc, char *argv[])
 	if ( result != 0 ) {
 		printf("cannot remove directory\n");
 		return -1;
-	}
-
-	return 0;
-}
-
-int shell_cd_mkdirst(struct shell *shell, int argc, char *argv[])
-{
-	struct shell_entry entry;
-	int result, count;
-
-	char buffer[10];
-
-	if (argc != 2) {
-		printf("ussage: %s <count>\n", argv[0]);
-		return 0;
-	}
-
-	sscanf(argv[1], "%d", &count);
-	for (int i = 0; i < count; i++) {
-		sprintf(buffer, "%d", i);
-		result = shell->fops.mkdir(
-			&shell->disk, &shell->fops, &shell->curdir,
-			(const char *) buffer, &entry
-		);
-
-		if (result != 0) {
-			printf("cannot create directory\n");
-			return -1;
-		}
 	}
 
 	return 0;
