@@ -151,7 +151,8 @@ int shell_cmd_touch(struct shell *shell, int argc, char *argv[])
 int shell_cmd_fill(struct shell *shell, int argc, char *argv[])
 {
 	struct shell_entry entry;
-	int ntimes, bufsiz;
+	char *buffer;
+	int ntimes, bufsiz, wordsiz;
 
 	if (argc < 3) {
 		printf("usage: fill <file> <string> [ntimes]\n");
@@ -170,13 +171,23 @@ int shell_cmd_fill(struct shell *shell, int argc, char *argv[])
 		return -3;
 	}
 
-	bufsiz = strlen(argv[2]);
-	for (int i = 0; i < ntimes; i++) {
-		shell->fops.file_ops.write(
-			&shell->disk, &shell->fops, &shell->curdir, 
-			&entry, i * bufsiz, bufsiz, argv[2] 
-		);
+	wordsiz = strlen(argv[2]);
+	bufsiz = wordsiz * ntimes;
+	buffer = malloc(bufsiz);
+	if (buffer == NULL) { 
+		printf("An uncontrollable error has occured!\n");
+		return -4;
 	}
+
+	for (int i = 0; i < ntimes; i++)
+		memcpy(&buffer[i * wordsiz], argv[2], wordsiz);
+
+	shell->fops.file_ops.write(
+		&shell->disk, &shell->fops, &shell->curdir, 
+		&entry, 0, bufsiz, buffer
+	);
+
+	free(buffer);
 
 	return 0;
 }
@@ -349,34 +360,6 @@ int shell_cmd_cat(struct shell *shell, int argc, char *argv[])
 	}
 
 	putchar('\n');
-
-	return 0;
-}
-
-int shell_cmd_mkdirst(struct shell *shell, int argc, char *argv[])
-{
-	struct shell_entry entry;
-	int result, count;
-	char buffer[10];
-
-	if (argc != 2) {
-		printf("usage: %s <count>\n", argv[0]);
-		return 0;
-	}
-
-	sscanf(argv[1], "%d", &count);
-	for (int i = 0; i < count; i++) {
-		sprintf(buffer, "%d", i);
-		result = shell->fops.mkdir(
-			&shell->disk, &shell->fops,
-			&shell->curdir, buffer, &entry
-		);
-
-		if ( result != 0 ) {
-			printf("cannot create directory\n");
-			return -1;
-		}
-	}
 
 	return 0;
 }

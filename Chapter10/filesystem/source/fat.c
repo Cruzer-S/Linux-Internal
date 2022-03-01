@@ -1353,9 +1353,9 @@ int fill_bpb(
 	bpb->sectors_per_cluster = sectors_per_cluster;
 	bpb->reserved_sector_count = ((type == FAT_TYPE_FAT32) ? 32 : 1);
 	bpb->number_of_fats = 1;
-	bpb->root_entry_count = (type == FAT_TYPE_FAT32 ? 0 : 512);
-	bpb->total_sectors = ((number_of_sectors < 0x10000) 
-			   ? (uint16_t) number_of_sectors : 0);
+	bpb->root_entry_count = ((type == FAT_TYPE_FAT32) ? 0 : 512);
+	bpb->total_sectors = ( (number_of_sectors < 0x10000) 
+			   ?   (uint16_t) number_of_sectors : 0 );
 
 	bpb->media = 0xF8;
 	fill_fat_size(bpb, type);
@@ -1447,7 +1447,8 @@ uint32_t get_sector_per_cluster32(uint64_t disk_size, uint32_t bytes_per_sector)
 }
 
 uint32_t get_sector_per_clusterN(
-		uint32_t disk_table[][2], uint64_t disk_size, uint32_t bytes_per_sector
+		uint32_t disk_table[][2], uint64_t disk_size,
+		uint32_t bytes_per_sector
 ) {
 	int i = 0;
 

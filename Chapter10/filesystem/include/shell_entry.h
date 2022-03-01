@@ -33,7 +33,7 @@ struct shell_entry {
 	struct shell_filetime create_time,
 			      modify_time;
 
-	char pdata[1024];
+	uint8_t pdata[1024];
 
 	struct list_head list;
 };

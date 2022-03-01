@@ -36,16 +36,17 @@ int cluster_list_push(struct cluster_list *clist, sector_t cluster)
 		list_init(&entry->list);
 
 		if (clist->head == NULL) {
-			clist->head = &entry->list;
+			clist->tail = clist->head = &entry->list;
 		} else {
-			list_add_tail(clist->head, &entry->list);
+			list_add(clist->tail, &entry->list);
+			clist->tail = &entry->list;
 		}
 
 		clist->push_offset = 0;
 	}
 
 	entry = LIST_ENTRY(
-		clist->head->prev,
+		clist->tail,
 		struct cluster_list_element,
 		list
 	);
@@ -64,7 +65,7 @@ int cluster_list_pop(struct cluster_list *clist, sector_t *cluster)
 		return -1;
 
 	entry = LIST_ENTRY(
-		clist->head->prev, 
+		clist->head, 
 		struct cluster_list_element,
 		list
 	);
@@ -76,8 +77,10 @@ int cluster_list_pop(struct cluster_list *clist, sector_t *cluster)
 
 	if (clist->pop_offset == CLUSTER_LIST_CLUSTER_PER_ELEMENT) {	
 		list_del(&entry->list);
-		if (clist->head == &entry->list)
-			clist->head = NULL;
+		if (clist->head == clist->tail)
+			clist->tail = clist->head = NULL;
+		else
+			clist->head = clist->head->next;
 
 		clist->pop_offset = 0;
 		free(entry);
