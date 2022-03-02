@@ -114,10 +114,13 @@ int fat_format(struct disk_operations *disk, enum fat_type type)
 {
 	struct fat_bpb bpb;
 
+	// bpb 에 기본적인 내용을 채워 넣는다.
 	if (fill_bpb(&bpb, type, disk->number_of_sectors, 
 		     disk->bytes_per_sector) != 0)
 		return -1;
 
+	// 위 내용을 0번째 sector 에 기록한다. bpb 의 크기 역시 512 bytes 이다.
+	// reserved area 의 초기화라고 생각하면 된다.
 	disk->write_sector(disk, 0, &bpb);
 
 	printf("bytes per sector: %u\n", bpb.bytes_per_sector);
@@ -128,7 +131,12 @@ int fat_format(struct disk_operations *disk, enum fat_type type)
 				                        : bpb.total_sectors32);
 	putchar('\n');
 
+	// reserved area 다음 영역인 FAT 영역의 초기화를 진행한다.
+	// 초기화된 FAT 영역을 디스크에 기록한다.
 	clear_fat(disk, &bpb);
+
+	// FAT 의 다음 영역인, root directory entry 를 생성하고
+	// 이를 디스크에 기록한다.
 	create_root(disk, &bpb);
 
 	return 0;
@@ -146,23 +154,35 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 	if (fs == NULL || fs->disk == NULL)
 		return -1;
 
+	// reserved area 를 디스크로부터 읽어 들인다. 이는 앞서
+	// fill_bpb 를 통해 구성한 내용이다.
 	if (fs->disk->read_sector(fs->disk, 0, &fs->bpb))
 		return -1;
 
+	// bpb 의 유효성을 검사한다.
 	if (validate_bpb(&fs->bpb) != 0)
 		return -1;
 
+	// bpb 를 통해 사용하고 있는 FAT 파일 시스템의 타입 정보를 추출한다.
 	fs->type = get_fat_type(&fs->bpb);
+	// FAT32 는 아직 지원하지 않으므로 -1 반환
 	if (fs->type == FAT_TYPE_FAT32)
 		return -1;
 
+	// 루트 디렉터리 엔트리 섹터를 읽어 들인다.
 	if (read_root_sector(fs, 0, sector))
 		return -1;
 
+	// root 노드를 0x00 으로 초기화하고...
 	memset(root, 0x00, sizeof(struct fat_node));
+	// root 노드의 dirent 를 root dirent 로 초기화한다.
 	memcpy(&root->entry, sector, sizeof(struct fat_dirent));
+	// root 의 filesystem 을 인자로 받아온 filesystem 으로 초기화
 	root->fs = fs;
 
+	// 첫 번째 cluster 의 값을 읽어 들인다.
+	// 원래 아래의 코드가 실행되어야 하는데 FAT12 시스템으로
+	// 아래의 if statement 가 실행될 일은 없다.
 	fs->eoc_mark = get_fat_entry(fs, 1);
 	if (fs->type == FAT_TYPE_FAT32) {
 		if (fs->eoc_mark & (FAT_BIT_MASK16_SHUT | FAT_BIT_MASK32_ERR))
@@ -172,12 +192,18 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 			return -1;
 	}
 
+	
+	// fat_size16 의 값이 0 이 아니라면 (FAT32 가 아니라면)
 	if (fs->bpb.fat_size16 != 0)
 		fs->fat_size = fs->bpb.fat_size16;
+	// fat_size16 의 값이 0 이라면 (FAT32 라면)
 	else
 		fs->fat_size = fs->bpb.bpb32.fat_size32;
 
+	// cluster_list 를 초기화한다.
 	cluster_list_init(&fs->cluster_list);
+
+	// free cluster 를 찾아 다니면서 cluster chain 을 구성한다.
 	search_free_clusters(fs);
 
 	memset(root->entry.name, 0x20, FAT_LIMIT_ENTRY_NAME_LENGTH);
@@ -597,6 +623,7 @@ int get_fat_sector(struct fat_filesystem *fs, sector_t cluster,
 		break;
 
 	case FAT_TYPE_FAT12:
+		// 요청한 cluster 에 대한 fat_offset 을 계산한다.
 		fat_offset = cluster + (cluster / 2);
 		break;
 
@@ -605,9 +632,14 @@ int get_fat_sector(struct fat_filesystem *fs, sector_t cluster,
 		break;
 	}
 
+	// *fat_sector 는 reserved_sector_count + (offset / sector_size) 로
+	// 계산되어 진다.
 	*fat_sector = fs->bpb.reserved_sector_count + (
 		fat_offset / fs->bpb.bytes_per_sector
 	);
+
+	// fat_entry_offset 은 fat_offset 을 sector size 로 나눈 나머지로
+	// 구할 수 있다.
 	*fat_entry_offset = fat_offset % fs->bpb.bytes_per_sector;
 
 	return 0;
@@ -617,15 +649,21 @@ int prepare_fat_sector(
 		struct fat_filesystem *fs, sector_t cluster,
 		sector_t *fat_sector, uint32_t *fat_entry_offset, byte *sector
 ){
+	// cluster 를 통해 fat 의 sector 위치와 sector 내에서의 offset 을 계산.
 	get_fat_sector(fs, cluster, fat_sector, fat_entry_offset);
+
+	// 앞서 구한 sector 를 바탕으로 디스크에서 데이터를 긁어온다.
 	fs->disk->read_sector(fs->disk, *fat_sector, sector);
 
+	// 만일 fs 의 type 이 FAT12 이면서 fat_entry 의 offset 이 
+	// sector size - 1 과 같다면 그 다음 sector 또한 읽어 들인다.
 	if (fs->type == FAT_TYPE_FAT12
 	&& *fat_entry_offset == (fs->bpb.bytes_per_sector - 1)) {
 		fs->disk->read_sector(
 			fs->disk, *fat_sector + 1,
 			&sector[fs->bpb.bytes_per_sector]
 		);
+
 		return 1;
 	}
 
@@ -638,6 +676,7 @@ uint32_t get_fat_entry(struct fat_filesystem *fs, sector_t cluster)
 	sector_t fat_sector;
 	uint32_t fat_entry_offset;
 
+	// cluster 를 통해 fat 의 sector 위치와 sector 내의 offset 을 계산한다.
 	prepare_fat_sector(fs, cluster, &fat_sector, &fat_entry_offset, sector);
 
 	switch (fs->type) {
@@ -649,11 +688,17 @@ uint32_t get_fat_entry(struct fat_filesystem *fs, sector_t cluster)
 		return (uint32_t) (*((uint16_t *) &sector[fat_entry_offset]));
 
 	case FAT_TYPE_FAT12:
+		// 만일 cluster 가 홀수라면
 		if (cluster % 2 == 1)
+			// sector 의 fat_entry_offset 위치의 값을 읽어 들인다.
+			// FAT12 의 FAT entry 크기는 12 bit 이므로, 먼저
+			// offset 기준으로 2byte 를 읽고 앞에 4 bit 를 자른다.
 			return (uint32_t) (
 				*((uint16_t *) &sector[fat_entry_offset])
 				>> 4
 			);
+		// 홀수라면 반대로 동작한다. 앞의 12 bit 를 읽고 뒤의 4 bit 를
+		// 짤라낸다.
 		else
 			return (uint32_t) (
 				*((uint16_t *) &sector[fat_entry_offset]) 
@@ -800,6 +845,7 @@ int search_free_clusters(struct fat_filesystem *fs)
 	uint32_t total_sectors, data_sector, root_sector,
 		 count_of_clusters, fat_size, cluster;
 
+	// root entry 가 존재하는 root sector 의 위치를 계산한다.
 	root_sector = (
 		(fs->bpb.root_entry_count * 32) + (fs->bpb.bytes_per_sector - 1)
 	) / fs->bpb.bytes_per_sector;
@@ -1341,12 +1387,16 @@ int fill_bpb(
 		return -1;
 
 	memset(bpb, 0x00, sizeof(struct fat_bpb));
+
+	// jmp code 를 삽입
 	bpb->jmp_boot[0] = 0xEB;
 	bpb->jmp_boot[1] = 0x00;
 	bpb->jmp_boot[2] = 0x90;
 
+	// OEM 이름, 필자 이름으로 박아 넣었다.
 	memcpy(bpb->oem_name, "mythos", 8);
 
+	// 클러스터 당 섹터의 수를 계산한다.
 	sectors_per_cluster = get_sector_per_cluster(
 		type, disk_size, bytes_per_sector
 	);
@@ -1354,22 +1404,37 @@ int fill_bpb(
 		return -1;
 	}
 
+	// 섹터 당 바이트
 	bpb->bytes_per_sector = bytes_per_sector;
+	// 클러스터 당 섹터 수
 	bpb->sectors_per_cluster = sectors_per_cluster;
+	// 예약된 섹터 크기 (맨 앞의 BPB 하나가 있으므로 당연히 1 이다.)
 	bpb->reserved_sector_count = ((type == FAT_TYPE_FAT32) ? 32 : 1);
+	// FAT 의 수인데 일반적으론 백업본까지 합쳐 두 개이지만
+	// 필자의 예에서는 1 개만 존재한다.
 	bpb->number_of_fats = 1;
+	// root directory 가 가질 수 있는 entry 의 개수
+	// FAT32 에서는 사용하지 않으므로 0 으로 초기화
 	bpb->root_entry_count = ((type == FAT_TYPE_FAT32) ? 0 : 512);
-	bpb->total_sectors = ( (number_of_sectors < 0x10000) 
+	// 전체 섹터의 수
+	bpb->total_sectors = ( (number_of_sectors < 0x10000)
 			   ?   (uint16_t) number_of_sectors : 0 );
 
+	// media 는 장치의 특성을 의미하는 0xF8 은 고정 디스크를 의미한다.
+	// HDD 정도로 이해하면 될 듯 하다.
 	bpb->media = 0xF8;
+
+	// FAT 의 크기를 계산한다.
 	fill_fat_size(bpb, type);
 
+	// 디스크 관련 정보인데 0 으로 초기화 한다.
 	bpb->sectors_per_track = 0;
 	bpb->number_of_heads = 0;
+	// 전체 섹터의 수
 	bpb->total_sectors32 = (number_of_sectors >= 0x10000 
 			     ? number_of_sectors : 0);
 
+	// FAT32 정보 초기화, FAT12 에선 사용되지 않음
 	if (type == FAT_TYPE_FAT32) {
 		bpb->bpb32.exflags = 0x0081;
 		bpb->bpb32.filesystem_version = 0;
@@ -1380,20 +1445,27 @@ int fill_bpb(
 		memset(bpb->bpb32.reserved, 0x00, 12);
 	}
 
+	// bs 초기화
 	if (type == FAT_TYPE_FAT32)
 		bs = &bpb->bpb32.bs;
 	else
 		bs = &bpb->bs;
 
+	// drive number 초기화
 	if (type == FAT_TYPE_FAT12)
 		bs->drive_number = 0x00;
 	else
 		bs->drive_number = 0x80;
 
+	// 부트 시그니쳐 초기화
 	bs->reserved1 = 0;
 	bs->boot_signature = 0x29;
 	bs->volume_id = 0;
+
+	// 볼륨 레이블 초기화
 	memcpy(bs->volume_label, "mythos fat", 11);
+
+	// 파일 시스템 정보 초기화
 	memcpy(bs->filesystem_type, fat_type_to_string(type), 8);
 
 	return 0;
@@ -1467,12 +1539,21 @@ uint32_t get_sector_per_clusterN(
 
 void fill_fat_size(struct fat_bpb *bpb, enum fat_type type)
 {
+	// 말 그대로 disk 크기에 맞는 섹터의 수
 	uint32_t disk_size = (bpb->total_sectors32 == 0 ? bpb->total_sectors 
 			                                : bpb->total_sectors32);
+	// root directory entry 를 위해 할당되는 sector 의 수
+	// root_entry_count 는 root dirent 가 가질 수 있는 directory entry 의
+	// 크기로 default 로 512 이고 dirent 의 크기는 32 bytes 이다.
+	// 이를 섹터의 크기(512 bytes) 로 나누면 필요한 섹터의 크기를 구할 수
+	// 있게 되고 이는 (512 * 32) / 512  = 32 가 된다.
 	uint32_t root_dir_sectors = (
-		(bpb->root_entry_count * 32) + (bpb->bytes_per_sector - 1)
+		(bpb->root_entry_count * sizeof(struct fat_dirent))
+	      + (bpb->bytes_per_sector - 1)
 	) / bpb->bytes_per_sector;
 
+	// 아래의 수식은 Microsoft 에서 제공하는 공식 문서의 계산 방법인데
+	// 정확하게 딱 맞는 크기는 아니고 조금 넉넉하게 크기를 잡는다.
 	uint32_t tmp1 = disk_size - (
 		bpb->reserved_sector_count + root_dir_sectors
 	),	 tmp2 = (256 * bpb->sectors_per_cluster) + bpb->number_of_fats;
@@ -1498,19 +1579,31 @@ int clear_fat(struct disk_operations *disk, struct fat_bpb *bpb)
 	sector_t fat_sector;
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
 
+	// File Allocate Table 을 작성하기 위한 512 byte 섹터를 초기화
 	memset(sector, 0x00, sizeof(sector));
+
+	// fat_sector 위치 = reserved area 의 크기
 	fat_sector = bpb->reserved_sector_count;
 
+	// fat_size 는 앞서 fill_fat_size() 로 계산한 값
 	if (bpb->fat_size16 != 0)
 		fat_size = bpb->fat_size16;
 	else
 		fat_size = bpb->bpb32.fat_size32;
 
+	// FAT 영역의 시작과 끝은 fat_sector ~ end 가 된다.
 	end = fat_sector + (fat_size * bpb->number_of_fats);
 
+	// FAT 의 1, 2 번째 cluster 는 예약되어 있다.
+	// 1: Media Type
+	// 2: Partition Status
+	// fill_reserved_fat() 는 이를 초기화해주는 함수이다.
 	fill_reserved_fat(bpb, sector);
+	
+	// reserved cluster 를 디스크에 기록한다.
 	disk->write_sector(disk, fat_sector, sector);
 
+	// 예약된 cluster 를 제외한 나머지 영역은 모두 0x00 으로 초기화한다.
 	memset(sector, 0x00, sizeof(sector));
 	for (uint32_t i = fat_sector + 1; i < end; i++)
 		disk->write_sector(disk, i, sector);
@@ -1530,10 +1623,16 @@ int fill_reserved_fat(struct fat_bpb *bpb, byte *sector)
 	type = get_fat_type(bpb);
 	switch (type) {
 	case FAT_TYPE_FAT12:
+		// FAT12 의 각 FAT entry 의 크기는 12 비트이고,
+		// FAT 의 앞 두 엔트리가 예약 영역이므로 24 bit = 3 byte 
+		// 로 계산할 수 있다.
 		shut_errbit12 = (uint32_t *) sector;
 
+		// 아래의 값을 쓰게 되면
+		// 0xFF8FFF 00 00000000 ......
+		// 이 된다.
 		*shut_errbit12 = 0xFF0 << 20;
-		*shut_errbit12 |= ((uint32_t) bpb->media &0x0F) << 20;
+		*shut_errbit12 |= ((uint32_t) bpb->media & 0x0F) << 20;
 		*shut_errbit12 |= FAT_MS_EOC12 << 8;
 		break;
 
@@ -1563,9 +1662,12 @@ int create_root(struct disk_operations *disk, struct fat_bpb *bpb)
 	sector_t root_sector = 0;
 	struct fat_dirent *entry;
 
+	// 먼저 sector 를 모두 0x00 으로 초기화하고...
 	memset(sector, 0x00, FAT_LIMIT_MAX_SECTOR_SIZE);
+	// sector 로부터 dirent 구조체를 위한 메모리를 가져와
 	entry = (struct fat_dirent *) sector;
 
+	// root directory entry 를 구성한다.
 	memcpy(entry->name, "mythos fat", FAT_LIMIT_ENTRY_NAME_LENGTH);
 	entry->attribute = FAT_ATTR_VOLUME_ID;
 
@@ -1573,11 +1675,14 @@ int create_root(struct disk_operations *disk, struct fat_bpb *bpb)
 	if (get_fat_type(bpb) == FAT_TYPE_FAT32) {
 		/* Not implemented yet */
 	} else {
+		// 루트 엔트리의 섹터 위치는 매위 쉽게 계산 가능하다.
+		// reserved area + FAT 크기 => root entry 시작 위치
 		root_sector = bpb->reserved_sector_count + (
 			bpb->number_of_fats * bpb->fat_size16
 		);
 	}
 
+	// root directory entry 를 disk 에 기록한다.
 	disk->write_sector(disk, root_sector, sector);
 
 	return 0;

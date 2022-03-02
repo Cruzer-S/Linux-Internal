@@ -1,7 +1,9 @@
 #ifndef DISK_H__
 #define DISK_H__
 
-#include "cluster_list.h"
+#include <stdint.h>
+
+typedef uint32_t sector_t;
 
 struct disk_operations {
 	int (*read_sector) (struct disk_operations *, sector_t , void *);

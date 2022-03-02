@@ -5,7 +5,7 @@
 
 #include "list.h"
 
-typedef uint32_t sector_t;
+#include "disksim.h" // for the sector_t
 
 #define CLUSTER_LIST_CLUSTER_PER_ELEMENT	1023
 

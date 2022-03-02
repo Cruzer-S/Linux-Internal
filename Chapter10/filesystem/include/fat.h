@@ -17,7 +17,8 @@ enum  fat_type {
 enum fat_limit {
 	FAT_LIMIT_MAX_SECTOR_SIZE	= 512,
 	FAT_LIMIT_MAX_NAME_LENGTH	= 256,
-	FAT_LIMIT_ENTRY_NAME_LENGTH	= 11,	
+	FAT_LIMIT_ENTRY_NAME_LENGTH	= 11,
+	FAT_LIMIT_ENTRY_SIZE		= 32
 };
 
 enum fat_eoc {
@@ -75,22 +76,24 @@ struct fat_boot_sector {
 };
 
 struct fat_bpb {
+	// 0x00 ~ 0x0F
 	byte		jmp_boot[3];
 	byte		oem_name[8];
-
 	uint16_t	bytes_per_sector;
 	uint8_t		sectors_per_cluster;
 	uint16_t	reserved_sector_count;
+
+	// 0x10 ~ 0x1F
 	uint8_t		number_of_fats;
 	uint16_t	root_entry_count;
-
 	uint16_t	total_sectors;
-
 	byte		media;
-
 	uint16_t	fat_size16;
 	uint16_t	sectors_per_track;
 	uint16_t	number_of_heads;
+	uint32_t	hidden_sector;
+
+	// 0x20 ~ 0x59
 	uint32_t	total_sectors32;
 
 	union {
