@@ -180,7 +180,7 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 	// root 의 filesystem 을 인자로 받아온 filesystem 으로 초기화
 	root->fs = fs;
 
-	// 첫 번째 cluster 의 값을 읽어 들인다.
+	// 두 번째 cluster 의 값을 읽어 들인다. (partition status)
 	// 원래 아래의 코드가 실행되어야 하는데 FAT12 시스템으로
 	// 아래의 if statement 가 실행될 일은 없다.
 	fs->eoc_mark = get_fat_entry(fs, 1);
@@ -191,7 +191,6 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 		if (fs->eoc_mark & (FAT_BIT_MASK16_SHUT | FAT_BIT_MASK16_ERR))
 			return -1;
 	}
-
 	
 	// fat_size16 의 값이 0 이 아니라면 (FAT32 가 아니라면)
 	if (fs->bpb.fat_size16 != 0)
@@ -204,8 +203,10 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 	cluster_list_init(&fs->cluster_list);
 
 	// free cluster 를 찾아 다니면서 cluster chain 을 구성한다.
+	// 이는 cluster_list 로 표현된다.
 	search_free_clusters(fs);
 
+	// root_entry 의 이름을 0x20 으로 초기화한다. 0x20 은 공백문자다.
 	memset(root->entry.name, 0x20, FAT_LIMIT_ENTRY_NAME_LENGTH);
 
 	return 0;
@@ -217,12 +218,16 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 	sector_t root_entry_count;
 	struct fat_entry_location location;
 
+	// 요청한 dirent 가 root directory entry 인지 확인
 	if ((IS_POINT_ROOT_ENTRY(dir->entry))
 	&&  (dir->fs->type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16)))
 	{
+		// FAT32 는 지원 안함
 		if (dir->fs->type == FAT_TYPE_FAT32)
 			return -1;
 
+		// root dirent 에 존재 가능한 엔트리의 개수를 받아서...
+		// 그 크기만큼 반복한다. FAT12 + 필자의 코드 기준으로 512.
 		root_entry_count = dir->fs->bpb.root_entry_count;
 		for (int i = 0; i < root_entry_count; i++) {
 			read_root_sector(dir->fs, i, sector);
@@ -235,7 +240,7 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 			))
 				break;
 		}
-	} else {
+	} else { // root directory 가 아니라면?
 		int i = GET_FIRST_CLUSTER(dir->entry);
 		do {
 			for (int j = 0;
@@ -850,27 +855,43 @@ int search_free_clusters(struct fat_filesystem *fs)
 		(fs->bpb.root_entry_count * 32) + (fs->bpb.bytes_per_sector - 1)
 	) / fs->bpb.bytes_per_sector;
 
+	// fat_size 를 가져온다.
 	if (fs->bpb.fat_size16 != 0)
 		fat_size = fs->bpb.fat_size16;
 	else
 		fat_size = fs->bpb.bpb32.fat_size32;
 
+	// total_sectors 를 가져온다.
 	if (fs->bpb.total_sectors != 0)
 		total_sectors = fs->bpb.total_sectors;
 	else
 		total_sectors = fs->bpb.total_sectors32;
 
+	// 전체 섹터에서 메타 데이터 영역의 섹터를 빼면?
+	// 당연히 데이터 섹터의 크기가 나온다.
 	data_sector = total_sectors - (
 		fs->bpb.reserved_sector_count + (
 			fs->bpb.number_of_fats * fat_size
 		) + root_sector
 	);
+
+	// 전체 클러스터 수는 당연히 전체 데이터 섹터를 클러스터 당 섹터의
+	// 크기로 나누면 된다.
 	count_of_clusters = data_sector / fs->bpb.sectors_per_cluster;
 
+	// 데이터 영역을 표현하는 클러스터의 수만큼 반복을 진행한다.
+	// 앞서 얘기했듯이 0 과 1 cluster 는 예약 영역이므로 2 부터 시작한다.
 	for (int i = 2; i < count_of_clusters; i++) {
+		// get_fat_entry 를 통해 받아오는 cluster 정보는 당연히
+		// 0x00 이다. 왜냐하면 이미 clear_fat 과정에서 전부 0x00
+		// 으로 초기화 했기 때문이다. 따라서 fat_read_superblock()
+		// 을 호출하는 시점에서의 cluster 의 값들은 전부 0x00 이다.
 		cluster = get_fat_entry(fs, i);
 		if (cluster == 0x00)
 			add_free_cluster(fs, i);
+
+		// add_free_cluster() 함수를 호출해서 cluster 를 cluster_list
+		// 에 쭉쭉 추가한다.
 	}
 
 	return 0;
