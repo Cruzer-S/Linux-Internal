@@ -79,9 +79,9 @@ int cluster_list_pop(struct cluster_list *clist, sector_t *cluster)
 			clist->tail = clist->head = NULL;
 		else
 			clist->head = clist->head->next;
+		free(entry);
 
 		clist->pop_offset = 0;
-		free(entry);
 	}	
 
 	return 0;

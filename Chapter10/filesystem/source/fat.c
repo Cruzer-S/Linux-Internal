@@ -75,7 +75,7 @@ static int read_dir_from_sector(
 		byte *, fat_node_add_func , void *
 );
 
-static enum fat_eoc get_ms_eoc(enum fat_type );
+static uint32_t get_ms_eoc(enum fat_type );
 static bool is_eoc(enum fat_type , sector_t );
 static int add_free_cluster(struct fat_filesystem *, sector_t );
 static sector_t alloc_free_cluster(struct fat_filesystem * );
@@ -113,16 +113,16 @@ static int fill_bpb(struct fat_bpb *, enum fat_type , sector_t , uint32_t );
 int fat_format(struct disk_operations *disk, enum fat_type type)
 {
 	struct fat_bpb bpb;
-
+	
 	// bpb 에 기본적인 내용을 채워 넣는다.
 	if (fill_bpb(&bpb, type, disk->number_of_sectors, 
 		     disk->bytes_per_sector) != 0)
 		return -1;
-
+	
 	// 위 내용을 0번째 sector 에 기록한다. bpb 의 크기 역시 512 bytes 이다.
 	// reserved area 의 초기화라고 생각하면 된다.
 	disk->write_sector(disk, 0, &bpb);
-
+	
 	printf("bytes per sector: %u\n", bpb.bytes_per_sector);
 	printf("sectors per cluster: %u\n", bpb.sectors_per_cluster);
 	printf("number of FATs: %u\n", bpb.number_of_fats);
@@ -130,15 +130,15 @@ int fat_format(struct disk_operations *disk, enum fat_type type)
 	printf("total sectors: %u\n", bpb.total_sectors ? bpb.total_sectors 
 				                        : bpb.total_sectors32);
 	putchar('\n');
-
+	
 	// reserved area 다음 영역인 FAT 영역의 초기화를 진행한다.
 	// 초기화된 FAT 영역을 디스크에 기록한다.
 	clear_fat(disk, &bpb);
-
+	
 	// FAT 의 다음 영역인, root directory entry 를 생성하고
 	// 이를 디스크에 기록한다.
 	create_root(disk, &bpb);
-
+	
 	return 0;
 }
 
@@ -150,36 +150,36 @@ void fat_umount(struct fat_filesystem *fs)
 int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 {
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
-
+	
 	if (fs == NULL || fs->disk == NULL)
 		return -1;
-
+	
 	// reserved area 를 디스크로부터 읽어 들인다. 이는 앞서
 	// fill_bpb 를 통해 구성한 내용이다.
 	if (fs->disk->read_sector(fs->disk, 0, &fs->bpb))
 		return -1;
-
+	
 	// bpb 의 유효성을 검사한다.
 	if (validate_bpb(&fs->bpb) != 0)
 		return -1;
-
+	
 	// bpb 를 통해 사용하고 있는 FAT 파일 시스템의 타입 정보를 추출한다.
 	fs->type = get_fat_type(&fs->bpb);
 	// FAT32 는 아직 지원하지 않으므로 -1 반환
 	if (fs->type == FAT_TYPE_FAT32)
 		return -1;
-
+	
 	// 루트 디렉터리 엔트리 섹터를 읽어 들인다.
 	if (read_root_sector(fs, 0, sector))
 		return -1;
-
+	
 	// root 노드를 0x00 으로 초기화하고...
 	memset(root, 0x00, sizeof(struct fat_node));
 	// root 노드의 dirent 를 root dirent 로 초기화한다.
 	memcpy(&root->entry, sector, sizeof(struct fat_dirent));
 	// root 의 filesystem 을 인자로 받아온 filesystem 으로 초기화
 	root->fs = fs;
-
+	
 	// 두 번째 cluster 의 값을 읽어 들인다. (partition status)
 	// 원래 아래의 코드가 실행되어야 하는데 FAT12 시스템으로
 	// 아래의 if statement 가 실행될 일은 없다.
@@ -198,26 +198,26 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 	// fat_size16 의 값이 0 이라면 (FAT32 라면)
 	else
 		fs->fat_size = fs->bpb.bpb32.fat_size32;
-
+	
 	// cluster_list 를 초기화한다.
 	cluster_list_init(&fs->cluster_list);
-
+	
 	// free cluster 를 찾아 다니면서 cluster chain 을 구성한다.
 	// 이는 cluster_list 로 표현된다.
 	search_free_clusters(fs);
-
+	
 	// root_entry 의 이름을 0x20 으로 초기화한다. 0x20 은 공백문자다.
 	memset(root->entry.name, 0x20, FAT_LIMIT_ENTRY_NAME_LENGTH);
-
+	
 	return 0;
 }
 
 int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 {
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
-	sector_t root_entry_count;
+	sector_t root_sector;
 	struct fat_entry_location location;
-
+	
 	// 요청한 dirent 가 root directory entry 인지 확인
 	if ((IS_POINT_ROOT_ENTRY(dir->entry))
 	&&  (dir->fs->type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16)))
@@ -227,9 +227,15 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 			return -1;
 
 		// root dirent 에 존재 가능한 엔트리의 개수를 받아서...
-		// 그 크기만큼 반복한다. FAT12 + 필자의 코드 기준으로 512.
-		root_entry_count = dir->fs->bpb.root_entry_count;
-		for (int i = 0; i < root_entry_count; i++) {
+		// root_sector 의 크기를 구한다.
+		struct fat_bpb *bpb = &dir->fs->bpb;
+		root_sector = (
+			(bpb->root_entry_count * sizeof(struct fat_dirent))
+		      + (bpb->bytes_per_sector - 1)
+		) / bpb->bytes_per_sector;
+
+		// root entry 가 가질 수 있는 sector 의 크기만큼 반복한다.
+		for (int i = 0; i < root_sector; i++) {
 			read_root_sector(dir->fs, i, sector);
 			location.cluster = 0;
 			location.sector = i;
@@ -571,7 +577,8 @@ enum fat_type get_fat_type(struct fat_bpb *bpb)
 		 count_of_clusters, fat_size;
 
 	root_sector = (
-		(bpb->root_entry_count * 32) + (bpb->bytes_per_sector - 1)
+		(bpb->root_entry_count * sizeof(struct fat_dirent))
+	      + (bpb->bytes_per_sector - 1)
 	) / bpb->bytes_per_sector;
 
 	if (bpb->fat_size16 != 0)
@@ -629,6 +636,9 @@ int get_fat_sector(struct fat_filesystem *fs, sector_t cluster,
 
 	case FAT_TYPE_FAT12:
 		// 요청한 cluster 에 대한 fat_offset 을 계산한다.
+		// 당연히 FAT12 의 entry 크기가 12 bit 이므로
+		// fat_offset 은 cluster 의 위치 1 byte + 
+		// cluster 위치의 반타작인 4 bit 를 더한 결과이다.
 		fat_offset = cluster + (cluster / 2);
 		break;
 
@@ -653,7 +663,7 @@ int get_fat_sector(struct fat_filesystem *fs, sector_t cluster,
 int prepare_fat_sector(
 		struct fat_filesystem *fs, sector_t cluster,
 		sector_t *fat_sector, uint32_t *fat_entry_offset, byte *sector
-){
+) {
 	// cluster 를 통해 fat 의 sector 위치와 sector 내에서의 offset 을 계산.
 	get_fat_sector(fs, cluster, fat_sector, fat_entry_offset);
 
@@ -677,6 +687,8 @@ int prepare_fat_sector(
 
 uint32_t get_fat_entry(struct fat_filesystem *fs, sector_t cluster)
 {
+	// FAT12 의 entry 크기가 12bit 이므로 sector 의 마지막 cluster 라면
+	// 다음 sector 와 이어지게 된다. 따라서 2 배의 sector 를 선언한다.
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE * 2];
 	sector_t fat_sector;
 	uint32_t fat_entry_offset;
@@ -692,23 +704,21 @@ uint32_t get_fat_entry(struct fat_filesystem *fs, sector_t cluster)
 	case FAT_TYPE_FAT16:
 		return (uint32_t) (*((uint16_t *) &sector[fat_entry_offset]));
 
-	case FAT_TYPE_FAT12:
-		// 만일 cluster 가 홀수라면
-		if (cluster % 2 == 1)
-			// sector 의 fat_entry_offset 위치의 값을 읽어 들인다.
-			// FAT12 의 FAT entry 크기는 12 bit 이므로, 먼저
-			// offset 기준으로 2byte 를 읽고 앞에 4 bit 를 자른다.
-			return (uint32_t) (
-				*((uint16_t *) &sector[fat_entry_offset])
-				>> 4
-			);
-		// 홀수라면 반대로 동작한다. 앞의 12 bit 를 읽고 뒤의 4 bit 를
-		// 짤라낸다.
-		else
-			return (uint32_t) (
-				*((uint16_t *) &sector[fat_entry_offset]) 
-			        & FAT_MS_EOC12
-			);
+	case FAT_TYPE_FAT12: do {
+		uint8_t first, last;
+
+		if (cluster % 2 == 0) {
+			first = sector[fat_entry_offset];
+			last  = (sector[fat_entry_offset + 1] & 0xF0) >> 4;
+		} else {
+			first = (sector[fat_entry_offset] & 0x0F) << 4;
+			last  = sector[fat_entry_offset + 1];
+		}
+
+		return ( (((uint16_t) first) << 4) | last );
+
+	} while (false);
+		break;
 	}
 
 	return -1;
@@ -736,16 +746,18 @@ int set_fat_entry(struct fat_filesystem *fs, sector_t cluster, uint32_t value)
 		*((uint16_t *) &sector[fat_entry_offset]) = (uint16_t) value;
 		break;
 	
-	case FAT_TYPE_FAT12:
-		if (cluster & 0x01) {
-			value <<= 4;
-			*((uint16_t *) &sector[fat_entry_offset]) &= 0x000F;
+	case FAT_TYPE_FAT12: do {
+		if (cluster % 2 == 0) {
+			sector[fat_entry_offset] = (value & 0xFF0) >> 4;
+			sector[fat_entry_offset + 1] &= 0x0F;
+			sector[fat_entry_offset + 1] |= ((value & 0x0F) << 4);
 		} else {
-			value &= 0x0FFF;
-			*((uint16_t *) &sector[fat_entry_offset]) &= 0xF000;
+			sector[fat_entry_offset] &= 0xF0;
+			sector[fat_entry_offset] |= ((value & 0xF00) >> 8);
+			sector[fat_entry_offset + 1] = value & 0xFF;
 		}
 
-		*((uint16_t *) &sector[fat_entry_offset]) |= (uint16_t) value;
+	} while (false);
 		break;
 	}
 
@@ -773,10 +785,12 @@ int read_root_sector(struct fat_filesystem *fs, sector_t number, byte *sector)
 {
 	sector_t root_sector;
 
+	// root sector 를 구해온다.
 	root_sector = fs->bpb.reserved_sector_count + (
 		fs->bpb.number_of_fats * fs->bpb.fat_size16
 	);
 
+	// root dirent 의 시작 섹터 + number 번째 섹터를 읽어 들인다.
 	return fs->disk->read_sector(fs->disk, root_sector + number, sector);
 }
 
@@ -805,7 +819,7 @@ sector_t calc_physical_sector(
 	sector_t root_dir_sectors;
 
 	root_dir_sectors = (
-		(fs->bpb.root_entry_count * 32) 
+		(fs->bpb.root_entry_count * sizeof(struct fat_dirent))
 	      + (fs->bpb.bytes_per_sector - 1)
 	) / fs->bpb.bytes_per_sector;
 
@@ -852,7 +866,8 @@ int search_free_clusters(struct fat_filesystem *fs)
 
 	// root entry 가 존재하는 root sector 의 위치를 계산한다.
 	root_sector = (
-		(fs->bpb.root_entry_count * 32) + (fs->bpb.bytes_per_sector - 1)
+		(fs->bpb.root_entry_count * sizeof(struct fat_dirent))
+	      + (fs->bpb.bytes_per_sector - 1)
 	) / fs->bpb.bytes_per_sector;
 
 	// fat_size 를 가져온다.
@@ -929,7 +944,7 @@ int read_dir_from_sector(
 	return 0;
 }
 
-enum fat_eoc get_ms_eoc(enum fat_type type)
+uint32_t get_ms_eoc(enum fat_type type)
 {
 	switch (type) {
 	case FAT_TYPE_FAT12:
@@ -947,18 +962,18 @@ bool is_eoc(enum fat_type type, sector_t cluster_number)
 {
 	switch (type) {
 	case FAT_TYPE_FAT12:
-		if (FAT_EOC12 <= (cluster_number & 0x0FFF))
+		if (FAT_EOC12 <= (cluster_number & FAT_MS_EOC12))
 			return -1;
 		break;
 
 	case FAT_TYPE_FAT16:
-		if (FAT_EOC16 <= (cluster_number & 0xFFFF))
+		if (FAT_EOC16 <= (cluster_number & FAT_MS_EOC16))
 			return -1;
 
 		break;
 
 	case FAT_TYPE_FAT32:
-		if (FAT_EOC32 <= (cluster_number & 0x0FFFFFFF))
+		if (FAT_EOC32 <= (cluster_number & FAT_MS_EOC32))
 			return -1;
 		break;
 	}
@@ -1635,7 +1650,7 @@ int clear_fat(struct disk_operations *disk, struct fat_bpb *bpb)
 int fill_reserved_fat(struct fat_bpb *bpb, byte *sector)
 {
 	enum fat_type type;
-	uint32_t *shut_errbit12;
+	uint8_t *shut_errbit12;
 	uint16_t *shut_bit16;
 	uint16_t *err_bit16;
 	uint32_t *shut_bit32;
@@ -1647,14 +1662,17 @@ int fill_reserved_fat(struct fat_bpb *bpb, byte *sector)
 		// FAT12 의 각 FAT entry 의 크기는 12 비트이고,
 		// FAT 의 앞 두 엔트리가 예약 영역이므로 24 bit = 3 byte 
 		// 로 계산할 수 있다.
-		shut_errbit12 = (uint32_t *) sector;
+		shut_errbit12 = (uint8_t *) sector;
 
-		// 아래의 값을 쓰게 되면
-		// 0xFF8FFF 00 00000000 ......
-		// 이 된다.
-		*shut_errbit12 = 0xFF0 << 20;
-		*shut_errbit12 |= ((uint32_t) bpb->media & 0x0F) << 20;
-		*shut_errbit12 |= FAT_MS_EOC12 << 8;
+		// 1 바이트씩 작성하지 않으면 사용 중인 system 의 endian 에 
+		// 따라 값이 거꾸로 저장될 수도 있다. 이는 이후 get_fat_entry()
+		// 함수 호출 시에 치명적인 문제를 발생시킬 수 있으므로
+		// 반드시 1 byte 씩 읽고 써야 한다.
+		*(shut_errbit12++) = 0xFF;
+		*(shut_errbit12)   = (bpb->media & 0x0F) << 4;
+
+		*(shut_errbit12++) |= ((uint16_t) FAT_MS_EOC12 >> 8) & 0x0F;
+		*(shut_errbit12) = (uint16_t) FAT_MS_EOC12 & 0xFF;
 		break;
 
 	case FAT_TYPE_FAT16:
