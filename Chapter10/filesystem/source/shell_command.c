@@ -279,8 +279,27 @@ int shell_cmd_mkdir(struct shell *shell, int argc, char *argv[])
 	struct shell_entry entry;
 	int result;
 
-	if (argc != 2) {
+	if (argc < 2) {
 		printf("usage: %s <name>\n", argv[0]);
+		return 0;
+	} else if (argc == 3) {
+		int count;
+		char filename[BUFSIZ];
+
+		sscanf(argv[2], "%d", &count);
+		for (int i = 0; i < count; i++) {
+			sprintf(filename, "%s%02d", argv[1], i + 1);
+			result = shell->fops.mkdir(
+				&shell->disk, &shell->fops,
+				&shell->curdir, filename, &entry
+			);
+
+			if (result) {
+				printf("cannot create directory\n");
+				return -1;
+			}
+		}
+
 		return 0;
 	}
 
@@ -320,9 +339,8 @@ int shell_cmd_rmdir(struct shell *shell, int argc, char *argv[])
 int shell_cmd_cat(struct shell *shell, int argc, char *argv[])
 {
 	struct shell_entry entry;
-	char buffer[BUFSIZ];
+	char buffer[BUFSIZ + 1];
 	int result;
-	unsigned long offset;
 
 	if (argc != 2) {
 		printf("usage: %s <file>\n", argv[0]);
@@ -338,13 +356,15 @@ int shell_cmd_cat(struct shell *shell, int argc, char *argv[])
 		return -1;
 	}
 
-	offset = 0;
-	while (shell->fops.file_ops.read(
-			&shell->disk, &shell->fops, &shell->curdir,
-			&entry, offset, BUFSIZ, buffer) > 0) {
-		printf("%s", buffer);
-		offset += BUFSIZ;
-		memset(buffer, 0x00, BUFSIZ);
+	for (unsigned long offset = 0, readlen;
+	     (readlen = shell->fops.file_ops.read(
+				&shell->disk, &shell->fops, &shell->curdir,
+				&entry, offset, BUFSIZ, buffer
+	     )) > 0;
+	     offset += readlen)
+	{
+		buffer[readlen] = '\0';
+		printf("(%zu) %s\n", strlen(buffer), buffer);
 	}
 
 	putchar('\n');

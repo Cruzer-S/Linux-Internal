@@ -174,16 +174,19 @@ struct fat_filetime {
 	uint16_t year;
 };
 
-struct fat_entry_location {
+struct fat_dirent_location {
+	// cluster index
 	uint32_t cluster;
+	// cluster 내에서의 sector index
 	uint32_t sector;
+	// sector 내에서의 dirent index
 	int32_t number;
 };
 
 struct fat_node {
 	struct fat_filesystem		*fs;
 	struct fat_dirent		entry;
-	struct fat_entry_location	location;
+	struct fat_dirent_location	location;
 };
 
 typedef int (*fat_node_add_func)(void *, struct fat_node *);

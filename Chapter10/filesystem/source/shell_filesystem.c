@@ -192,7 +192,8 @@ static int fs_rmdir(
 	struct fat_node dir;
 
 	fat_parent = *((struct fat_node *) parent->pdata);
-	fat_lookup(&fat_parent, name, &dir);
+	if (fat_lookup(&fat_parent, name, &dir) != 0)
+		return -1;
 
 	return fat_rmdir(&dir);
 }

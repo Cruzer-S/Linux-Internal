@@ -23,13 +23,18 @@
 	(ENTRY).first_cluster_lo = (uint16_t) ((CLUSTER) & 0xFFFF);		\
 } while (false)
 
+#define IS_POINT_ROOT_LOCATION(LOC) ((LOC)->cluster == 0)
+
 #define MIN(A, B) ( (A) < (B) ? (A) : (B) )
 #define MAX(A, B) ( (A) > (B) ? (A) : (B) )
 // -----------------------------------------------------------------------------
 // local function prototype
 // -----------------------------------------------------------------------------
 static int fill_reserved_fat(struct fat_bpb *, byte *);
+static int clear_fat(struct disk_operations *, struct fat_bpb *);
 static int create_root(struct disk_operations *, struct fat_bpb *);
+static int fill_bpb(struct fat_bpb *, enum fat_type , sector_t , uint32_t );
+
 static void fill_fat_size(struct fat_bpb *, enum fat_type );
 
 static uint32_t get_sector_per_clusterN(uint32_t [][2], uint64_t , uint32_t );
@@ -37,8 +42,8 @@ static uint32_t get_sector_per_cluster(enum fat_type , uint64_t, uint32_t );
 static uint32_t get_sector_per_cluster16(uint64_t , uint32_t );
 static uint32_t get_sector_per_cluster32(uint64_t , uint32_t );
 
-static struct fat_entry_location get_entry_location(const struct fat_dirent * );
-static int has_sub_entries(
+static struct fat_dirent_location get_dirent_location(const struct fat_dirent * );
+static int has_sub_dirents(
 		struct fat_filesystem *, const struct fat_dirent *
 );
 static enum fat_type get_fat_type(struct fat_bpb *);
@@ -50,7 +55,6 @@ static int prepare_fat_sector(
 		sector_t *, uint32_t *, byte *
 );
 
-static int clear_fat(struct disk_operations *, struct fat_bpb *);
 
 static uint32_t get_fat_entry(struct fat_filesystem *, sector_t );
 static int set_fat_entry(struct fat_filesystem *, sector_t , uint32_t );
@@ -71,7 +75,7 @@ static int write_data_sector(
 
 static int search_free_clusters(struct fat_filesystem *);
 static int read_dir_from_sector(
-		struct fat_filesystem *, struct fat_entry_location *,
+		struct fat_filesystem *, struct fat_dirent_location *,
 		byte *, fat_node_add_func , void *
 );
 
@@ -84,29 +88,28 @@ static int find_entry_at_sector(
 		const byte *, const byte *, uint32_t , uint32_t , uint32_t *
 );
 static int find_entry_on_root(
-		struct fat_filesystem *, const struct fat_entry_location *,
+		struct fat_filesystem *, const struct fat_dirent_location *,
 		const char *, struct fat_node *
 );
 static int find_entry_on_data(
-		struct fat_filesystem *, const struct fat_entry_location *,
+		struct fat_filesystem *, const struct fat_dirent_location *,
 		const char *, struct fat_node *
 );
-static int lookup_entry(
-		struct fat_filesystem *, const struct fat_entry_location *,
+static int lookup_dirent(
+		struct fat_filesystem *, const struct fat_dirent_location *,
 		const char *, struct fat_node *
 );
-static int set_entry(
-		struct fat_filesystem *, const struct fat_entry_location *,
+static int write_dirent(
+		struct fat_filesystem *, const struct fat_dirent_location *,
 		const struct fat_dirent *
 );
-static int insert_entry(
+static int register_child_dirent(
 		const struct fat_node *, struct fat_node *,
 		enum fat_dirent_attr 
 );
 
 static int format_name(struct fat_filesystem *, char *);
 static int free_cluster_chain(struct fat_filesystem *, uint32_t );
-static int fill_bpb(struct fat_bpb *, enum fat_type , sector_t , uint32_t );
 // -----------------------------------------------------------------------------
 // global function
 // -----------------------------------------------------------------------------
@@ -144,6 +147,7 @@ int fat_format(struct disk_operations *disk, enum fat_type type)
 
 void fat_umount(struct fat_filesystem *fs)
 {
+	// cluster list 를 제거한다.
 	cluster_list_release(&fs->cluster_list);
 }
 
@@ -181,8 +185,8 @@ int fat_read_superblock(struct fat_filesystem *fs, struct fat_node *root)
 	root->fs = fs;
 	
 	// 두 번째 cluster 의 값을 읽어 들인다. (partition status)
-	// 원래 아래의 코드가 실행되어야 하는데 FAT12 시스템으로
-	// 아래의 if statement 가 실행될 일은 없다.
+	// 원래는 file system 이 정상적인 상태인지를 확인하는 코드인데 FAT12 에
+	// 해당하는 case 가 없으므로 아래의 if statement 가 실행될 일은 없다.
 	fs->eoc_mark = get_fat_entry(fs, 1);
 	if (fs->type == FAT_TYPE_FAT32) {
 		if (fs->eoc_mark & (FAT_BIT_MASK16_SHUT | FAT_BIT_MASK32_ERR))
@@ -216,7 +220,7 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 {
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
 	sector_t root_sector;
-	struct fat_entry_location location;
+	struct fat_dirent_location location;
 	
 	// 요청한 dirent 가 root directory entry 인지 확인
 	if ((IS_POINT_ROOT_ENTRY(dir->entry))
@@ -227,14 +231,14 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 			return -1;
 
 		// root dirent 에 존재 가능한 엔트리의 개수를 받아서...
-		// root_sector 의 크기를 구한다.
+		// root_sector 의 크기를 구한다. 
 		struct fat_bpb *bpb = &dir->fs->bpb;
 		root_sector = (
 			(bpb->root_entry_count * sizeof(struct fat_dirent))
 		      + (bpb->bytes_per_sector - 1)
 		) / bpb->bytes_per_sector;
 
-		// root entry 가 가질 수 있는 sector 의 크기만큼 반복한다.
+		// root directory 가 가질 수 있는 sector size 만큼 반복
 		for (int i = 0; i < root_sector; i++) {
 			read_root_sector(dir->fs, i, sector);
 			location.cluster = 0;
@@ -243,12 +247,15 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 
 			if (read_dir_from_sector(
 				dir->fs, &location, sector, adder, list
-			))
+			    ) != 0)
 				break;
 		}
 	} else { // root directory 가 아니라면?
 		int i = GET_FIRST_CLUSTER(dir->entry);
 		do {
+			// FAT12 의 경우 사실 cluster 당 sector 가 1 개라서
+			// location.sector 는 언제나 0 이고 반복문은 한번만
+			// 실행된다.
 			for (int j = 0;
 			     j < dir->fs->bpb.sectors_per_cluster;
 			     j++)
@@ -264,6 +271,7 @@ int fat_read_dir(struct fat_node *dir, fat_node_add_func adder, void *list)
 					break;
 			}
 
+			// 다음 cluster 정보를 가져온다.
 			i = get_fat_entry(dir->fs, i);
 		} while ( (!is_eoc(dir->fs->type, i)) && (i != 0) );
 	}
@@ -282,54 +290,73 @@ int fat_mkdir(
 
 	strncpy(name, entry_name, FAT_LIMIT_MAX_NAME_LENGTH);
 
+	// 적합한 이름으로 변경
 	if (format_name(parent->fs, name))
 		return -1;
 
+	// fat_node 초기화
 	memset(ret, 0x00, sizeof(struct fat_node));
 	memcpy(ret->entry.name, name, FAT_LIMIT_ENTRY_NAME_LENGTH);
 	ret->entry.attribute = FAT_ATTR_DIRECTORY;
-	first_cluster = alloc_free_cluster(parent->fs);
 
+	// 빈 cluster 를 할당 받고 이를 종단 cluster 로 설정한다.
+	first_cluster = alloc_free_cluster(parent->fs);
 	if (first_cluster == 0)
 		return -1;
 
 	set_fat_entry(parent->fs, first_cluster, get_ms_eoc(parent->fs->type));
 
+	// 할당받은 cluster 를 fat_node entry 의 first cluster 로 등록
 	SET_FIRST_CLUSTER(ret->entry, first_cluster);
-	result = insert_entry(parent, ret, FAT_DIRENT_ATTR_NO_MORE);
+	// 새로 생성한 dirent 를 root dirent 의 자식으로 등록
+	result = register_child_dirent(parent, ret, FAT_DIRENT_ATTR_NO_MORE);
 	if (result)
 		return -1;
 
+	// 파일 시스템을 부모로부터 계승 받는다.
 	ret->fs = parent->fs;
 
+	// dot entry 를 생성 및 부모의 자식으로 등록
 	memset(&dot_node, 0x00, sizeof(struct fat_node));
 	memset(dot_node.entry.name, 0x20, FAT_LIMIT_ENTRY_NAME_LENGTH);
 	dot_node.entry.name[0] = '.';
 	dot_node.entry.attribute = FAT_ATTR_DIRECTORY;
-	insert_entry(ret, &dot_node, FAT_DIRENT_ATTR_OVERWRITE);
+	// FAT_DIRENT_ATTR_OVERWRITE 를 사용하기 때문에 새로 생성된 dirent 의
+	// 첫 번째 entry 는 dot entry 가 먹게 된다.
+	register_child_dirent(ret, &dot_node, FAT_DIRENT_ATTR_OVERWRITE);
 
+	// dotdot entry 를 생성 및 부모의 자식으로 등록
 	memset(&dotdot_node, 0x00, sizeof(struct fat_node));
 	memset(dotdot_node.entry.name, 0x20, 11);
 	dotdot_node.entry.name[0] = '.';
 	dotdot_node.entry.name[1] = '.';
 	dotdot_node.entry.attribute = FAT_ATTR_DIRECTORY;
 
-	SET_FIRST_CLUSTER(dotdot_node.entry, GET_FIRST_CLUSTER(parent->entry)); 
-	insert_entry(ret, &dotdot_node, FAT_DIRENT_ATTR_NO_MORE); 
+	// dotdot entry 의 cluster 값을 parent 의 첫 번째 cluster 로 등록
+	// 부모의 위치를 정보를 알림
+	SET_FIRST_CLUSTER(dotdot_node.entry, GET_FIRST_CLUSTER(parent->entry));
+	register_child_dirent(ret, &dotdot_node, FAT_DIRENT_ATTR_NO_MORE); 
 
 	return 0;
 }
 
 int fat_rmdir(struct fat_node *dir)
 {
-	if (has_sub_entries(dir->fs, &dir->entry))
+	
+	// sub directory 가 있는지 확인하고, 찾았다면 -1 반환
+	if (has_sub_dirents(dir->fs, &dir->entry))
 		return -1;
 
+	// 못 찾았으나 정작 삭제를 요청한 dirent 가 directory 가 아니라면
 	if ( !(dir->entry.attribute & FAT_ATTR_DIRECTORY) )
 		return -1;
 
+	// dirent 의 attribute 를 free 로 변경
 	dir->entry.name[0] = FAT_DIRENT_ATTR_FREE;
-	set_entry(dir->fs, &dir->location, &dir->entry);
+	// 변경된 정보를 disk 에 기록
+	write_dirent(dir->fs, &dir->location, &dir->entry);
+	
+	// free cluster list 에 등록
 	free_cluster_chain(dir->fs, GET_FIRST_CLUSTER(dir->entry));
 
 	return 0;
@@ -339,7 +366,7 @@ int fat_lookup(
 		struct fat_node *parent, const char *entry_name,
 		struct fat_node *ret_entry
 ){
-	struct fat_entry_location begin;
+	struct fat_dirent_location begin;
 	char formatted_name[FAT_LIMIT_ENTRY_NAME_LENGTH] = { 0, };
 
 	begin.cluster = GET_FIRST_CLUSTER(parent->entry);
@@ -354,32 +381,40 @@ int fat_lookup(
 	if (IS_POINT_ROOT_ENTRY(parent->entry))
 		begin.cluster = 0;
 
-	return lookup_entry(parent->fs, &begin, formatted_name, ret_entry);
+	return lookup_dirent(parent->fs, &begin, formatted_name, ret_entry);
 }
 
 int fat_create(
 		struct fat_node *parent, const char *entry_name,
 		struct fat_node *ret_entry
 ){
-	struct fat_entry_location first;
+	struct fat_dirent_location first;
 	char name[FAT_LIMIT_ENTRY_NAME_LENGTH] = { 0, };
 
+	// 이름을 형식에 맞춘다.
 	strncpy(name, entry_name, FAT_LIMIT_ENTRY_NAME_LENGTH);
 	if (format_name(parent->fs, name))
 		return -1;
 
+	// ret_entry 의 정보를 초기화
 	memset(ret_entry, 0x00, sizeof(struct fat_node));
+
+	// 이름만 등록
 	memcpy(ret_entry->entry.name, name, FAT_LIMIT_ENTRY_NAME_LENGTH);
 
-	first.cluster = parent->entry.first_cluster_lo;
+	// parent 의 cluster 를 가져온다.
+	// sector 와 number 를 0 으로 초기화해서 
+	first.cluster = GET_FIRST_CLUSTER(parent->entry);
 	first.sector = 0;
 	first.number = 0;
 
-	if (lookup_entry(parent->fs, &first, name, ret_entry) == 0)
+	// 같은 이름은 가진 entry 가 있는지 탐색해본다.
+	if (lookup_dirent(parent->fs, &first, name, ret_entry) == 0)
 		return -1;
 
+	// 없었다면 file system 을 상속 받아 parent 의 자식으로 등록한다.
 	ret_entry->fs = parent->fs;
-	if (insert_entry(parent, ret_entry, 0))
+	if (register_child_dirent(parent, ret_entry, 0))
 		return -1;
 
 	return 0;
@@ -394,6 +429,9 @@ int fat_read(
 	uint32_t cluster_number, sector_number, sector_offset;
 	uint32_t read_end;
 	uint32_t cluster_size, cluster_offset = 0;
+
+	if (offset > file->entry.filesize)
+		return -1;
 
 	current_cluster = GET_FIRST_CLUSTER(file->entry);
 	read_end = MIN(offset + length, file->entry.filesize);
@@ -417,9 +455,11 @@ int fat_read(
 		uint32_t copy_length;
 
 		cluster_number = current_offset / cluster_size;
-		if (cluster_seq != cluster_number) {
+		while (cluster_seq < cluster_number) {
 			cluster_seq++;
-			current_cluster = get_fat_entry(file->fs, current_cluster);
+			current_cluster = get_fat_entry(
+				file->fs, current_cluster
+			);
 		}
 
 		sector_number = (
@@ -450,12 +490,11 @@ int fat_read(
 int fat_write(
 		struct fat_node *file, unsigned long offset,
 		unsigned long length, const char *buffer
-){
+) {
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
 	uint32_t current_offset, current_cluster, cluster_seq = 0;
 	uint32_t cluster_number, sector_number, sector_offset;
-
-	uint32_t read_end, cluster_size;
+	uint32_t read_end, cluster_size, cluster_offset;
 
 	current_cluster = GET_FIRST_CLUSTER(file->entry);
 	read_end = offset + length;
@@ -464,20 +503,18 @@ int fat_write(
 
 	cluster_size = file->fs->bpb.bytes_per_sector 
 		     * file->fs->bpb.sectors_per_cluster;
+	cluster_offset = cluster_size;
 
-	while (offset > cluster_size) {
+	while (offset > cluster_offset) {
 		current_cluster = get_fat_entry(file->fs, current_cluster);
-		cluster_size += cluster_size;
-		cluster_seq ++;
+		cluster_offset += cluster_size;
+		cluster_seq++;
 	}
 
 	while (current_offset < read_end) {
 		uint32_t copy_length;
 
-		cluster_number = current_offset / (
-			file->fs->bpb.bytes_per_sector 
-		      * file->fs->bpb.sectors_per_cluster
-		);
+		cluster_number = current_offset / cluster_size;
 		if (current_cluster == 0) {
 			current_cluster = alloc_free_cluster(file->fs);
 			if (current_cluster == 0)
@@ -489,7 +526,7 @@ int fat_write(
 			              get_ms_eoc(file->fs->type));
 		}
 
-		if (cluster_seq != cluster_number) {
+		while (cluster_seq < cluster_number) {
 			uint32_t next_cluster;
 			cluster_seq++;
 
@@ -536,18 +573,22 @@ int fat_write(
 	}
 
 	file->entry.filesize = MAX(current_offset, file->entry.filesize);
-	set_entry(file->fs, &file->location, &file->entry);
+	write_dirent(file->fs, &file->location, &file->entry);
 
 	return current_offset - offset;
 }
 
 int fat_remove(struct fat_node *file)
 {
+	// directory 면 바로 빠져 나간다.
 	if (file->entry.attribute & FAT_ATTR_DIRECTORY)
 		return -1;
 
+	// file 의 ATTR 만 free 로 바꿔서 등록한다.
 	file->entry.name[0] = FAT_DIRENT_ATTR_FREE;
-	set_entry(file->fs, &file->location, &file->entry);
+	write_dirent(file->fs, &file->location, &file->entry);
+
+	// 파일에 할당된 cluster 를 따라가면서 모두 할당해제한다.
 	free_cluster_chain(file->fs, GET_FIRST_CLUSTER(file->entry));
 
 	return 0;
@@ -576,29 +617,37 @@ enum fat_type get_fat_type(struct fat_bpb *bpb)
 	uint32_t total_sectors, data_sector, root_sector,
 		 count_of_clusters, fat_size;
 
+	// root dirent sector 의 위치를 계산한다.
 	root_sector = (
 		(bpb->root_entry_count * sizeof(struct fat_dirent))
 	      + (bpb->bytes_per_sector - 1)
 	) / bpb->bytes_per_sector;
 
+	// file allocate table 의 크기를 불러온다.
 	if (bpb->fat_size16 != 0)
 		fat_size = bpb->fat_size16;
 	else
 		fat_size = bpb->bpb32.fat_size32;
 
+	// 전체 섹터의 개수를 불러온다.
 	if (bpb->total_sectors != 0)
 		total_sectors = bpb->total_sectors;
 	else
 		total_sectors = bpb->total_sectors32;
 
+	// 전체 섹터 크기에서 meta data sector 를 빼서
+	// file data sector 의 크기를 계산한다.
 	data_sector = total_sectors - (
-		bpb->reserved_sector_count + (
-			bpb->number_of_fats * fat_size
-		) + root_sector
+		bpb->reserved_sector_count
+	      + (bpb->number_of_fats * fat_size)
+	      + root_sector
 	);
 
+	// data sector 의 크기를 클러스터 당 섹터의 크기로 나눠서
+	// 데이터 섹터에 할당된 클러스터의 크기를 구한다.
 	count_of_clusters = data_sector / bpb->sectors_per_cluster;
 
+	// 크기에 따라 FAT Filesystem 의 type 을 반환한다.
 	if (count_of_clusters < 4085)
 		return FAT_TYPE_FAT12;
 	else if (count_of_clusters < 65525)
@@ -609,9 +658,9 @@ enum fat_type get_fat_type(struct fat_bpb *bpb)
 	return -1;
 }
 
-struct fat_entry_location get_entry_location(const struct fat_dirent *dirent)
+struct fat_dirent_location get_dirent_location(const struct fat_dirent *dirent)
 {
-	struct fat_entry_location location;
+	struct fat_dirent_location location;
 
 	location.cluster = GET_FIRST_CLUSTER(*dirent);
 	location.sector = 0;
@@ -664,7 +713,9 @@ int prepare_fat_sector(
 		struct fat_filesystem *fs, sector_t cluster,
 		sector_t *fat_sector, uint32_t *fat_entry_offset, byte *sector
 ) {
-	// cluster 를 통해 fat 의 sector 위치와 sector 내에서의 offset 을 계산.
+	// cluster 값을 통해 File Allocate Table 내에서의 fat entry 가
+	// 1. 위치하는 physical sector 의 값과 
+	// 2. 그 안에서의 offset 을 계산
 	get_fat_sector(fs, cluster, fat_sector, fat_entry_offset);
 
 	// 앞서 구한 sector 를 바탕으로 디스크에서 데이터를 긁어온다.
@@ -731,6 +782,8 @@ int set_fat_entry(struct fat_filesystem *fs, sector_t cluster, uint32_t value)
 	uint32_t fat_entry_offset;
 	int result;
 
+	// cluster 값을 통해 File Allocate Table 내에서 fat entry 의
+	// sector 위치와 그 안에서의 offset 을 구하고 해당 sector 를 불러온다.
 	result = prepare_fat_sector(
 		fs, cluster, &fat_sector, &fat_entry_offset, sector
 	);
@@ -747,6 +800,8 @@ int set_fat_entry(struct fat_filesystem *fs, sector_t cluster, uint32_t value)
 		break;
 	
 	case FAT_TYPE_FAT12: do {
+		// endian 의 무관하게 동작할 수 있도록 바이트 단위로
+		// operation 을 수행한다.
 		if (cluster % 2 == 0) {
 			sector[fat_entry_offset] = (value & 0xFF0) >> 4;
 			sector[fat_entry_offset + 1] &= 0x0F;
@@ -756,13 +811,16 @@ int set_fat_entry(struct fat_filesystem *fs, sector_t cluster, uint32_t value)
 			sector[fat_entry_offset] |= ((value & 0xF00) >> 8);
 			sector[fat_entry_offset + 1] = value & 0xFF;
 		}
+		} while (false);
 
-	} while (false);
 		break;
 	}
 
+	// 변경된 내용을 다시 디스크에 기록한다.
 	fs->disk->write_sector(fs->disk, fat_sector, sector);
 	if (result) {
+		// result 가 true 라면 변경 사항이 다음 sector 에도
+		// 영향을 주었으므로 다음 섹터 역시 디스크에 기록한다.
 		fs->disk->write_sector(
 			fs->disk, fat_sector + 1,
 			&sector[fs->bpb.bytes_per_sector]
@@ -774,8 +832,11 @@ int set_fat_entry(struct fat_filesystem *fs, sector_t cluster, uint32_t value)
 
 int validate_bpb(struct fat_bpb *bpb)
 {
-	if ( !(bpb->jmp_boot[0] == 0xEB && bpb->jmp_boot[2] == 0x90)
-	&&   !(bpb->jmp_boot[0] == 0xE9                            ))
+	// Jump boot code 확인, 어짜피 fill_bpb 에서 제대로 채워 넣었기
+	// 때문에 패 죽여도 -1 반환 안됨
+	if ( !(bpb->jmp_boot[0] == 0xEB)
+	&&   !(bpb->jmp_boot[2] == 0x90)
+	&&   !(bpb->jmp_boot[0] == 0xE9) )
 		return -1;
 
 	return 0;
@@ -784,12 +845,17 @@ int validate_bpb(struct fat_bpb *bpb)
 int read_root_sector(struct fat_filesystem *fs, sector_t number, byte *sector)
 {
 	sector_t root_sector;
+	sector_t fat_sector;
+
+	// fat sector 크기를 구한다.
+	fat_sector = (
+		(fs->bpb.number_of_fats * fs->bpb.fat_size16)
+	      + (fs->bpb.bytes_per_sector - 1)
+	) / (fs->bpb.bytes_per_sector);
 
 	// root sector 를 구해온다.
-	root_sector = fs->bpb.reserved_sector_count + (
-		fs->bpb.number_of_fats * fs->bpb.fat_size16
-	);
-
+	root_sector = fs->bpb.reserved_sector_count + fat_sector;
+	
 	// root dirent 의 시작 섹터 + number 번째 섹터를 읽어 들인다.
 	return fs->disk->read_sector(fs->disk, root_sector + number, sector);
 }
@@ -799,11 +865,14 @@ int write_root_sector(
 		sector_t sector_number,
 		const byte *sector)
 {
-	sector_t root_sector;
+	sector_t root_sector, fat_sector;
 
-	root_sector = fs->bpb.reserved_sector_count + (
-		fs->bpb.number_of_fats * fs->bpb.fat_size16
-	);
+	fat_sector = (
+		(fs->bpb.number_of_fats * fs->bpb.fat_size16)
+	      + (fs->bpb.bytes_per_sector - 1)
+	) / fs->bpb.bytes_per_sector;
+
+	root_sector = fs->bpb.reserved_sector_count + fat_sector;
 
 	return fs->disk->write_sector(
 		fs->disk, root_sector + sector_number, sector
@@ -817,16 +886,32 @@ sector_t calc_physical_sector(
 	sector_t first_data_sector;
 	sector_t first_sector_of_cluster;
 	sector_t root_dir_sectors;
+	sector_t fat_sector;
 
+	// root dirent 를 위해 할당된 영역의 sector 크기를 계산한다.
 	root_dir_sectors = (
 		(fs->bpb.root_entry_count * sizeof(struct fat_dirent))
 	      + (fs->bpb.bytes_per_sector - 1)
 	) / fs->bpb.bytes_per_sector;
 
-	first_data_sector = fs->bpb.reserved_sector_count 
-	                  + (fs->bpb.number_of_fats * fs->fat_size)
+	fat_sector = (
+		(fs->bpb.number_of_fats * fs->fat_size)
+	      + (fs->bpb.bytes_per_sector - 1)
+	) / fs->bpb.bytes_per_sector;
+
+	// first data sector 의 위치는...
+	// 1. reserved sector 의 크기
+	// 2. FAT sector 크기
+	// 3  root directory entries 들을 위해 할당된 섹터의 크기
+	// 를 모두 더한 곳에 위치하게 된다.
+	first_data_sector = fs->bpb.reserved_sector_count
+	                  + fat_sector
 			  + root_dir_sectors;
 
+	// cluster_number - 2 가 의미심장한 이는 root cluster 의 시작 위치인
+	// 2 를 뺀 것이다. root directory 에서 최초로 생성되는 dirent 에게
+	// 할당되는 cluster 는 0x02 이다. 이는 first_data_sector 를 계산할때
+	// 모두 정산되었으므로 2 가 offset 0 이다.
 	first_sector_of_cluster = (
 		(cluster_number - 2) * fs->bpb.sectors_per_cluster
 	) + first_data_sector;
@@ -839,6 +924,7 @@ int read_data_sector(
 		sector_t sector_number, byte *sector
 )
 {
+	// root entry data sector 의 다음 위치부터 읽어 들인다.
 	return fs->disk->read_sector(
 		fs->disk, calc_physical_sector(
 			fs, cluster_number, sector_number
@@ -913,24 +999,31 @@ int search_free_clusters(struct fat_filesystem *fs)
 }
 
 int read_dir_from_sector(
-		struct fat_filesystem *fs, struct fat_entry_location *location,
+		struct fat_filesystem *fs, struct fat_dirent_location *location,
 		byte *sector, fat_node_add_func adder, void *list
-)
+) 
 {
 	unsigned int entries_per_sector;
 	struct fat_dirent *dir;
 	struct fat_node node;
 
+	// 섹터 당 존재 가능한 dirent 의 개수를 계산한다. 현재 시스템 기준에서
+	// bytes_per_sector 가 512 byte 이고 fat_dirent 가 32 byte 이므로
+	// 한 섹터에 존재 가능한 fat dirent 의 수는 16 개이다.
 	entries_per_sector = fs->bpb.bytes_per_sector
 		           / sizeof(struct fat_dirent);
 	dir = (struct fat_dirent *) sector;
 
+	// 16 번 반복
 	for (unsigned int i = 0; i < entries_per_sector; i++) {
 		if (dir->name[0] == FAT_DIRENT_ATTR_FREE)
 			/* do nothing */ ;
-		else if(dir->name[0] == FAT_DIRENT_ATTR_NO_MORE)
+		else if(dir->name[0] == FAT_DIRENT_ATTR_NO_MORE) {
+			// directory 의 끝을 의미하므로 -1 반환하고 탈출
 			return -1;
-		else if ( !(dir->attribute & FAT_ATTR_VOLUME_ID) ) {
+		} else if ( !(dir->attribute & FAT_ATTR_VOLUME_ID) ) {
+			// FAT_ATTR_VOLUME_ID 는 root directory 에 부여되므로
+			// root directory 가 아니라면 이라는 뜻으로 해석
 			node.fs = fs;
 			node.location = *location;
 			node.location.number = i;
@@ -1019,196 +1112,246 @@ int find_entry_at_sector(
 
 	entry = (struct fat_dirent *) sector;
 
+	// begin 부터 last 까지 dirent 를 탐색
 	for (i = begin; i < last; i++) {
+		// 무명 entry 를 찾는다. 이는 has_sub_dirents 함수가
+		// 사용하는 것으로 현재 디렉터리 내에 sub directory 가 있는지
+		// 확인하는데 쓰인다.
 		if (formatted_name == NULL) {
-			if (entry[i].name[0] != FAT_DIRENT_ATTR_FREE 
-			&&  entry[i].name[0] != FAT_DIRENT_ATTR_NO_MORE) {
-				*number = i;
-				return 0;
-			}
+			// 존재하는 entry 라면
+			if (entry[i].name[0] != FAT_DIRENT_ATTR_FREE
+			&&  entry[i].name[0] != FAT_DIRENT_ATTR_NO_MORE)
+				goto FIND_ENTRY;
 		} else {
+			// 동일한 attribute 의 entry 를 찾았다면
 			if ((formatted_name[0] == FAT_DIRENT_ATTR_FREE
-			||   formatted_name[0] == FAT_DIRENT_ATTR_NO_MORE)) {
-				if (formatted_name[0] == entry[i].name[0]) {
-					*number = i;
-					return 0;
-				}
-			}
+			||   formatted_name[0] == FAT_DIRENT_ATTR_NO_MORE))
+				if (formatted_name[0] == entry[i].name[0])
+					goto FIND_ENTRY;
 
+			// 동일한 이름의 entry 를 찾았다면
 			if ( !memcmp(entry[i].name, formatted_name,
-				     FAT_LIMIT_ENTRY_NAME_LENGTH)   )  {
-				*number = i;
-				return 0;
-			}
+				     FAT_LIMIT_ENTRY_NAME_LENGTH)   )
+				goto FIND_ENTRY;
 		}
 
-		if (entry[i].name[0] == FAT_DIRENT_ATTR_NO_MORE) {
-			*number = i;
-			return -2;
-		}
-	}
+		// 암것도 안 걸렸는데 attribute 마저 no more 라면
+		if (entry[i].name[0] == FAT_DIRENT_ATTR_NO_MORE)
+			goto DOESNT_EXIST;
+	} goto CANT_NOT_FIND;
 
-	*number = i;
-
-	return -1;
+CANT_NOT_FIND: return -1;
+DOESNT_EXIST:  return -2;
+FIND_ENTRY:    *number = i;
+	       return 0;
 }
 
 int find_entry_on_root(
 		struct fat_filesystem *fs,
-		const struct fat_entry_location *first,
+		const struct fat_dirent_location *first,
 		const char *formatted_name,
 		struct fat_node *ret
-){
+) {
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
 	uint32_t number;
 	uint32_t last_sector;
 	uint32_t entries_per_sector, last_entry;
 	int32_t begin, result;
 	struct fat_dirent *entry;
-
-	begin = first->number;
+	
+	// entries_per_sector: 당연히 16.
+	// last_entry: 1 을 빼는데 이는 no more entry 를 위함
+	// last_sector: 마지막 entry 도 root entry count 를 
+	//              섹터 당 엔트리로 나눠서 계산
 	entries_per_sector = fs->bpb.bytes_per_sector
 		           / sizeof(struct fat_dirent);
-	last_entry = entries_per_sector - 1;
+	last_entry = entries_per_sector;
 	last_sector = fs->bpb.root_entry_count / entries_per_sector;
 
+	// dirent location 으로 부터 sector 내의 index 를 구한다.
+	begin = first->number;
+
+	// first sector 부터 last sector 사이에 있는 모든 dirent 를 읽는다.
 	for (uint32_t i = first->sector; i <= last_sector; i++) {
+		// sector 로 부터 데이터를 읽어온다.
 		read_root_sector(fs, i, sector);
+
+		// sector 로부터 첫 번째 dirent 의 주소를 가져온다.
 		entry = (struct fat_dirent *) sector;
 
+		// 다시 find_entry_at_sector 로 jump
 		result = find_entry_at_sector(
 			sector, (byte *) formatted_name,
 			begin, last_entry, &number
 		);
+		// 이제 다시 begin 은 0 으로 초기화
 		begin = 0;
 
+		// result == -1: 현재 섹터엔 없지만 이게 directory entry 의
+		//               끝은 아니므로 다음 섹터를 찾아봐!
 		if (result == -1)
 			continue;
 
+		// result == -2: 야 마지막 dirent 야 빠져나와
 		if (result == -2)
 			return -1;
 
+		// 찾았다면 ret->entry 를 발견한 entry 로 대입
+		// ret->entry = entry[number];
 		memcpy(&ret->entry, &entry[number], sizeof(struct fat_dirent));
 
+		// location 의
 		ret->location.cluster = 0;
 		ret->location.sector = i;
 		ret->location.number = number;
 
+		// ret 의 filesystem 등록
 		ret->fs = fs;
 
+		// 0 반환: 성공적으로 찾았음
 		return 0;
 	}
 
+	// 끝까지 뒤졌는데 그런거 없음
 	return -1;
 }
 
 int find_entry_on_data(
 		struct fat_filesystem *fs,
-		const struct fat_entry_location *first,
+		const struct fat_dirent_location *first,
 		const char *formatted_name,
 		struct fat_node *ret
 ) {
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
 	uint32_t number;
 	uint32_t entries_per_sector, last_entry;
-	uint32_t current_cluster;
+	uint32_t start_sector, current_cluster;
 	int32_t begin;
 	int32_t result;
 	struct fat_dirent *entry;
 
+	// 원본 데이터를 유지해야 하기 때문에
+	// 추적에 사용할 시작 위치 정보를 따로 저장
 	begin = first->number;
 	current_cluster = first->cluster;
+	start_sector = first->sector;
+
 	entries_per_sector = fs->bpb.bytes_per_sector
 			   / sizeof(struct fat_dirent);
-	last_entry = entries_per_sector - 1;
+	last_entry = entries_per_sector;
 
 	while (true) {
 		uint32_t next_cluster;
 
-		for (uint32_t i = first->sector;
+		// 요청한 첫 sector 부터 cluster 끝까지 탐색
+		for (uint32_t i = start_sector;
 		     i < fs->bpb.sectors_per_cluster;
 		     i++)
 		{
+			// sector 의 데이터를 읽어온다.
 			read_data_sector(fs, current_cluster, i, sector);
+
+			// entry 를 sector 의 주소로 초기화
 			entry = (struct fat_dirent *) sector;
 
+			// sector 내에서 dirent 의 탐색을 시작
 			result = find_entry_at_sector(
 				sector, (byte *) formatted_name,
 				begin, last_entry, &number
 			);
 
+			// 끝났다면 begin 을 0 으로 초기화
 			begin = 0;
 
+			// 해당 sector 를 조사 했는데 당장 없었다면
 			if (result == -1)
 				continue;
 
+			// no more entry 가 떴다면
 			if (result == -2)
-				return -1;
+				return -2;
 
+			// 찾았다면
 			memcpy(&ret->entry,
 			       &entry[number],
 			       sizeof(struct fat_dirent));
 
+			// 위치 정보 등록
 			ret->location.cluster = current_cluster;
 			ret->location.sector = i;
 			ret->location.number = number;
 
+			// 파일 시스템 등록
 			ret->fs = fs;
 
 			return 0;
 		}
 
+		// 다음 cluster 정보를 가져옴
 		next_cluster = get_fat_entry(fs, current_cluster);
 
+		// End of cluster 라면 반복 중단
 		if (is_eoc(fs->type, next_cluster))
 			break;
 		else if (next_cluster == 0)
 			break;
 
+		// 다음 cluster 가 있다면 start_sector 를 0 으로 초기화하고
+		// 처음부터 다시 진행
+		start_sector = 0;
 		current_cluster = next_cluster;
 	}
 
 	return -1;
 }
 
-int lookup_entry(
+int lookup_dirent(
 		struct fat_filesystem *fs,
-		const struct fat_entry_location *first,
+		const struct fat_dirent_location *first,
 		const char *entry_name,
 		struct fat_node *ret
-){
-	if ( (first->cluster == 0)
-	&&   (fs->type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) ))
+) {
+	// first 의 cluster 가 0 이라는 것 --> root dirent area 에 포함된
+	// dirent 객체라는 것을 의미한다.
+	if ( (first->cluster == 0                        )
+	&&   (fs->type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) ) )
 	{
 		return find_entry_on_root(fs, first, entry_name, ret);
 	} else {
 		return find_entry_on_data(fs, first, entry_name, ret);
 	}
 	
-	return 0;
+	return -1;
 }
 
-int set_entry(
+int write_dirent(
 		struct fat_filesystem *fs,
-		const struct fat_entry_location *location,
+		const struct fat_dirent_location *location,
 		const struct fat_dirent *value
 ){
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
 	struct fat_dirent *entry;
 
-	if ( (location->cluster == 0)
-	&&   (fs->type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16))) {
+	// location->cluster == 0 이라는 것은
+	// 해당 dirent 가 root dirent area 에 속해있는 원소임을
+	// 의미하는 것이다.
+	if ( (location->cluster == 0                      )
+	&&   (fs->type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16)) ) {
 		read_root_sector(fs, location->sector, sector);
 
+		// location 을 통해 찾은 dirent 위치에
+		// 인자로 전달한 value 값을 대입
 		entry = (struct fat_dirent *) sector;
 		entry[location->number] = *value;
 
+		// 변경된 dirent 정보를 디스크에 작성
 		write_root_sector(fs, location->sector, sector);
-	} else {
+	} else { // root sector 가 아니라면 data sector 에서 값을 읽어온다.
 		read_data_sector(
 			fs, location->cluster, location->sector, sector
 		);
 
+		// 이하 동문
 		entry = (struct fat_dirent *) sector;
 		entry[location->number] = *value;
 
@@ -1220,12 +1363,11 @@ int set_entry(
 	return 0;
 }
 
-int insert_entry(
+int register_child_dirent(
 		const struct fat_node *parent, struct fat_node *new_entry, 
 		enum fat_dirent_attr overwrite
-)
-{
-	struct fat_entry_location begin;
+) {
+	struct fat_dirent_location begin;
 	struct fat_node entry_no_more;
 	byte entry_name[2] = { 0, };
 	const struct fat_bpb *bpb;
@@ -1233,40 +1375,52 @@ int insert_entry(
 	const enum fat_type *type;
 	struct fat_filesystem *fs;
 
+	// 부모의 cluster 를 가져옴
 	begin.cluster = GET_FIRST_CLUSTER(parent->entry);
 	begin.sector = 0;
 	begin.number = 0;
 
+	// 부모로부터 온갖 정보를 다 빼옴
 	bpb = &parent->fs->bpb;
 	dirent = &parent->entry;
 	type = &parent->fs->type;
 	fs = parent->fs;
 
+	// parent 가 root directory 가 아니면서
+	// overwrite 속성 역시 FAT_DIRENT_ATTR_NO_MORE 가 아니라면?
 	if ( ( !(IS_POINT_ROOT_ENTRY(*dirent))		 )
-	&&   ( *type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) ) 
+	&&   ( *type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) )
 	&&   ( overwrite != FAT_DIRENT_ATTR_NO_MORE)     ) {
+		// 첫 번째 엔트리로 등록한다.
 		begin.number = 0;
-
-		set_entry(fs, &begin, &new_entry->entry);
+		write_dirent(fs, &begin, &new_entry->entry);
 		new_entry->location = begin;
 
+		// 그 다음 index 의 entry 는 no more entry 로 설정한다.
 		begin.number = 1;
 		memset(&entry_no_more, 0x00 ,sizeof(struct fat_node));
 		entry_no_more.entry.name[0] = FAT_DIRENT_ATTR_NO_MORE;
-		set_entry(fs, &begin, &entry_no_more.entry);
+		write_dirent(fs, &begin, &entry_no_more.entry);
 
+		// 끝!
 		return 0;
 	}
 
+	// 비어있는 dirent 를 탐색한다.
 	entry_name[0] = FAT_DIRENT_ATTR_FREE;
-	if (lookup_entry(fs, &begin, (char *) entry_name, &entry_no_more) == 0)
+	if (lookup_dirent(fs, &begin, (char *) entry_name, &entry_no_more) == 0)
 	{
-		set_entry(fs, &entry_no_more.location, &new_entry->entry);
+		// 찾았다면 그 위치를 new_entry 로 변경
+		write_dirent(fs, &entry_no_more.location, &new_entry->entry);
+		// location 도 새롭게 찾은 위치로 변경
 		new_entry->location = entry_no_more.location;
 
+		// 탈출
 		return 0;
 	}
 
+	// 위에서 비어있는 dirent 를 못 찾았다.
+	// 근데 이게 웬걸? 부모가 root 네? Hoxy 너...
 	if ( ( IS_POINT_ROOT_ENTRY(*dirent)              )
 	&&   ( *type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) ) ) {
 		uint32_t root_entry_count;
@@ -1275,44 +1429,68 @@ int insert_entry(
 			bpb->bytes_per_sector / sizeof(struct fat_dirent)
 		) + new_entry->location.number;
 
+		// root entry count 가 bpb->root_entry_count 보다 크거나 같다면
+		// => new_entry 가 root dirent 의 마지막 끝단 dirent 라면
 		if (root_entry_count >= bpb->root_entry_count)
 			return -1;
 	}
 
+	// no more entry 를 찾는데
 	entry_name[0] = FAT_DIRENT_ATTR_NO_MORE;
-	if (lookup_entry(fs, &begin, (char *) entry_name, &entry_no_more) != 0)
+	if (lookup_dirent(fs, &begin, (char *) entry_name, &entry_no_more) != 0)
+		// 못 찾았다면 빠져 나간다. 이건 뭔가 이상한 상황이다.
 		return -1;
 
-	set_entry(fs, &entry_no_more.location, &new_entry->entry);
+	// 찾았다면 no_more entry 위치에 new entry 를 집어 넣는다.
+	write_dirent(fs, &entry_no_more.location, &new_entry->entry);
 	new_entry->location = entry_no_more.location;
+
+	// no more entry 의 index 를 증가 시킨다
 	entry_no_more.location.number++;
 
+	// 만일 no more entry 가 sector 내의 마지막 index 였다면...?
 	if ( ( entry_no_more.location.number                     )
 	==   ( bpb->bytes_per_sector / sizeof(struct fat_dirent) ) )
 	{
+		// no more entry 의 sector 를 증가시키고
 		entry_no_more.location.sector++;
+		// index 를 0 으로 바꿔 다음 sector 로 옳길 준비를 한다.
 		entry_no_more.location.number = 0;
 
+		// 근데 여기서 또 이 sector 가 cluster 의 크기와 같다?
+		// => cluster 내의 마지막 sector 라면
 		if (entry_no_more.location.sector == bpb->sectors_per_cluster)
 		{
-			if( ( !(IS_POINT_ROOT_ENTRY(*dirent))           )
-			&&  ( *type & (FAT_TYPE_FAT12 | FAT_TYPE_FAT16) ) ) 
-			{
+			// root directory 가 아닌 경우에만
+			// cluster 를 늘린다.
+			// root dirent 의 경우 root dirent cluster 로부터
+			// 선형적으로 늘어나기 때문에 새로운 cluster 를
+			// 할당받을 필요가 없다. 또한 언제나 cluster 값이
+			// 0 으로 고정이므로 sector 와 number 만 설정해주면
+			// 된다.
+			if ( !IS_POINT_ROOT_ENTRY(*dirent) ) {
+				// span_cluster_chain 함수를 호출해서
+				// 다음 cluster 값을 받아오고 이를
+				// no more entry 의 cluster 값으로 설정
 				entry_no_more.location.cluster =
 					span_cluster_chain(
 						fs,
 						entry_no_more.location.cluster
 					);
 
+				// 실패했다?
 				if (entry_no_more.location.cluster == 0)
+					// 답이 없다.
 					return -1;
 
+				// 성공했다면 sector 를 0 으로 초기화
 				entry_no_more.location.sector = 0;
 			}
 		}
 	}
 
-	set_entry(fs, &entry_no_more.location, &entry_no_more.entry);
+	// no_more_entry 다시 기록
+	write_dirent(fs, &entry_no_more.location, &entry_no_more.entry);
 
 	return 0;
 }
@@ -1322,10 +1500,15 @@ int free_cluster_chain(struct fat_filesystem *fs, uint32_t first_cluster)
 	uint32_t current_cluster = first_cluster;
 	uint32_t next_cluster;
 
+	// current_cluster 가 end of cluster 도 free cluster 도 아니라면
 	while ( !is_eoc(fs->type, current_cluster) && current_cluster != 0x00) {
+		// 다음 cluster 위치를 가져오고
 		next_cluster = get_fat_entry(fs, current_cluster);
+		// 현재 cluster 를 free cluster 로 설정
 		set_fat_entry(fs, current_cluster, 0x00);
+		// free cluster 를 cluster list 에 등록
 		add_free_cluster(fs, current_cluster);
+		// 현재 cluster 를 next cluster 로 변경
 		current_cluster = next_cluster;
 	}
 
@@ -1386,17 +1569,23 @@ int format_name(struct fat_filesystem *fs, char *name)
 	return 0;
 }
 
-int has_sub_entries(struct fat_filesystem *fs, const struct fat_dirent *dirent)
+int has_sub_dirents(struct fat_filesystem *fs, const struct fat_dirent *dirent)
 {
-	struct fat_entry_location begin;
+	struct fat_dirent_location begin;
 	struct fat_node sub_entry;
 
-	begin = get_entry_location(dirent);
+	// 현재 directory 의 location 을 가져온 후
+	begin = get_dirent_location(dirent);
+	// 두 번째 entry 부터 시작해서 (dot 과 dotdot 을 무시하겠다는 의미)
 	begin.number = 2;
 
-	if ( !lookup_entry(fs, &begin, NULL, &sub_entry) )
-		return -1;
+	// format_name 을 NULL 로 주고 탐색을 수행한다.
+	// FAT_DIRENT_ATTR_FREE 와 FAT_DIRENT_ATTR_NO_MORE 로 설정되지 않은
+	// => 존재하는 entry 를 찾는다.
+	if ( !lookup_dirent(fs, &begin, NULL, &sub_entry) )
+		return 1;
 
+	// 찾았으면 0
 	return 0;
 }
 
@@ -1698,7 +1887,7 @@ int fill_reserved_fat(struct fat_bpb *bpb, byte *sector)
 int create_root(struct disk_operations *disk, struct fat_bpb *bpb)
 {
 	byte sector[FAT_LIMIT_MAX_SECTOR_SIZE];
-	sector_t root_sector = 0;
+	sector_t root_sector = 0, fat_sector;
 	struct fat_dirent *entry;
 
 	// 먼저 sector 를 모두 0x00 으로 초기화하고...
@@ -1714,11 +1903,13 @@ int create_root(struct disk_operations *disk, struct fat_bpb *bpb)
 	if (get_fat_type(bpb) == FAT_TYPE_FAT32) {
 		/* Not implemented yet */
 	} else {
-		// 루트 엔트리의 섹터 위치는 매위 쉽게 계산 가능하다.
+		fat_sector = (
+			(bpb->number_of_fats * bpb->fat_size16)
+		      + (bpb->bytes_per_sector - 1)
+		) / bpb->bytes_per_sector;
+		// 루트 엔트리의 섹터 위치는 매우 쉽게 계산 가능하다.
 		// reserved area + FAT 크기 => root entry 시작 위치
-		root_sector = bpb->reserved_sector_count + (
-			bpb->number_of_fats * bpb->fat_size16
-		);
+		root_sector = bpb->reserved_sector_count + fat_sector;
 	}
 
 	// root directory entry 를 disk 에 기록한다.
